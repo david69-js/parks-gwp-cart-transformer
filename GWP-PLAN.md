@@ -168,7 +168,8 @@ Transform, pero para functions de tipo `cart.validations.generate.run`.
 Sin esa llamada, la extensión se compila y se registra en el bundle (se ve en
 `.shopify/dev-bundle/manifest.json`), pero Shopify nunca la invoca.
 
-Arreglado:
+Primer intento (arreglado luego, ver punto 6 más abajo - **spoiler: este
+approach no funciona desde una UI extension y se terminó revirtiendo**):
 - Scope `write_validations` agregado a `shopify.app.toml` (requerido por
   `validationCreate`).
 - `ensureCartValidationActive()` en `ActionExtension.jsx`: primero consulta
@@ -180,12 +181,76 @@ Arreglado:
   Se ejecuta en cada guardado, junto a `ensureStorefrontMetafieldAccess` y
   `ensureCartTransformActive`.
 
-**Acción pendiente para que esto tome efecto:** el nuevo scope
-`write_validations` requiere reinstalar/reautorizar la app en la tienda de
-desarrollo, y después volver a abrir la Admin Action del producto y darle
-"Save" una vez más (para que `ensureCartValidationActive()` se ejecute y
-active la validación). Sin ese re-save, la validation function seguirá sin
-activarse aunque el código ya esté correcto.
+Tras reinstalar la app con el scope nuevo y volver a guardar, la validación
+SEGUÍA sin activarse - la razón real (no era el scope) se explica en el
+punto 6. `ensureCartValidationActive()` fue removido del código final.
+
+### 6. `validationCreate` NO puede llamarse desde una UI extension (limitación de plataforma, no bug)
+
+Después de reinstalar la app con el scope `write_validations` y volver a
+guardar la Admin Action varias veces, `.shopify/logs` seguía mostrando **0
+invocaciones** de `parks-cart-checkout-validation` (contra 53+ del transform).
+Y en Shopify Admin → Settings → Apps → parks-gwp-cart-transformer seguía
+mostrando **"Functions: 1 active"** (solo el transform), incluso después del
+re-save.
+
+Diagnóstico: probé la MISMA mutación `validationCreate` a mano en el
+GraphiQL local que expone `shopify app dev` (`http://localhost:3457/graphiql`)
+contra la misma tienda/app, y ahí **sí funcionó** (`enabled: true,
+blockOnFailure: true`, sin userErrors). Esto descarta un problema de sintaxis,
+de scope, o de la mutación en sí - el mismo código, desde un contexto
+distinto, funciona.
+
+La diferencia real: las Admin UI Extensions hacen "Direct API access" al
+Admin GraphQL API (`fetch("shopify:admin/api/graphql.json")`) en **modo
+online**, con los permisos del staff member logueado, no con el token
+**offline** de instalación de la app. `validationCreate` requiere acceso
+offline (documentado por Shopify: "*If your extension needs to use offline
+access mode, you should make requests using your app's backend*"). El
+GraphiQL de la CLI sí usa un token con acceso offline, por eso ahí funciona.
+`cartTransformCreate`, en cambio, SÍ es alcanzable en modo online (por eso
+`ensureCartTransformActive()` funciona bien desde la extensión) - no todas las
+mutaciones de "activación" tienen el mismo requisito de acceso.
+
+**Consecuencia arquitectónica:** una app 100% extension-only (sin backend, que
+es justamente el objetivo de este proyecto) **no puede activar
+programáticamente** la Cart & Checkout Validation function desde ninguna de
+sus propias extensiones. No hay forma de evitarlo sin agregar un backend.
+
+**Decisión del usuario:** quitar `ensureCartValidationActive()` del admin
+action (código que nunca puede tener éxito, no dejarlo como falso
+best-effort) y documentar acá el paso manual único que hay que correr una vez
+por tienda/instalación:
+
+```graphql
+mutation {
+  validationCreate(validation: {
+    functionHandle: "parks-cart-checkout-validation"
+    enable: true
+    blockOnFailure: true
+    title: "Gift With Purchase enforcement"
+  }) {
+    validation { id enabled blockOnFailure }
+    userErrors { field message code }
+  }
+}
+```
+
+Cómo correrlo: con `shopify app dev` corriendo, abrir
+`http://localhost:3457/graphiql` (URL local que imprime la propia CLI) y
+ejecutar la mutación de arriba contra la tienda conectada. Hace falta una sola
+vez por tienda - si la app se desinstala y se reinstala en esa tienda, hay que
+volver a correrlo (mismo criterio que `cartTransformCreate`, solo que ese sí
+se automatiza y este no). Antes de correrlo, conviene chequear que no exista
+ya una validación para este handle:
+
+```graphql
+query {
+  validations(first: 50) {
+    nodes { id enabled shopifyFunction { handle } }
+  }
+}
+```
 
 ## Qué cambia respecto a `free-gift-gwp-validation`
 

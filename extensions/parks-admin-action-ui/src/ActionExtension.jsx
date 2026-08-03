@@ -81,65 +81,17 @@ async function ensureCartTransformActive() {
   }
 }
 
-async function ensureCartValidationActive() {
-  // Idempotent: registers the parks-cart-checkout-validation function as an
-  // active, blocking Validation for this shop/app - without this, the
-  // function is bundled/deployed but Shopify never actually invokes it (it
-  // has to be explicitly activated, same idea as cartTransformCreate above,
-  // just a different mutation for this function type). Unlike
-  // metafieldDefinitionCreate's "TAKEN" error code, validationCreate has no
-  // confirmed "already exists" signal to rely on, so we check for an
-  // existing Validation with a matching function handle first, to avoid
-  // creating duplicate Validation entries on every save (a store is capped
-  // at 25 active validations).
-  try {
-    const existing = await adminFetch(
-      `query GwpExistingValidation {
-        validations(first: 50) {
-          nodes {
-            id
-            shopifyFunction { handle }
-          }
-        }
-      }`,
-    );
-
-    const alreadyActive = existing.validations.nodes.some(
-      (node) => node.shopifyFunction?.handle === "parks-cart-checkout-validation",
-    );
-
-    if (alreadyActive) {
-      console.log("GWP validationCreate skipped, already active");
-      return;
-    }
-
-    const result = await adminFetch(
-      `mutation EnsureCartValidation($validation: ValidationCreateInput!) {
-        validationCreate(validation: $validation) {
-          validation { id enabled blockOnFailure }
-          userErrors { field message code }
-        }
-      }`,
-      {
-        validation: {
-          functionHandle: "parks-cart-checkout-validation",
-          enable: true,
-          blockOnFailure: true,
-          title: "Gift With Purchase enforcement",
-        },
-      },
-    );
-
-    const userErrors = result.validationCreate.userErrors;
-    if (userErrors.length > 0) {
-      console.error("GWP validationCreate userErrors", userErrors);
-    } else {
-      console.log("GWP validationCreate result", result.validationCreate.validation);
-    }
-  } catch (e) {
-    console.error("GWP validationCreate failed", e);
-  }
-}
+// NOTE: there is intentionally no `ensureCartValidationActive()` here to
+// mirror `ensureCartTransformActive()` above. `validationCreate` requires
+// offline access - Admin UI extensions only ever get online access to the
+// Admin API (scoped to the logged-in staff member, not the app's own
+// offline grant), and offline-access calls can only be made from an app's
+// own backend. This app has no backend by design, so this extension can
+// never activate the Validation function itself; confirmed by testing
+// (identical call succeeds via the CLI's GraphiQL, which uses a different,
+// offline-capable token, but fails silently here). See GWP-PLAN.md ("one-
+// time manual validation activation") for the one-time step required per
+// shop install instead.
 
 async function adminFetch(query, variables) {
   const res = await fetch("shopify:admin/api/graphql.json", {
@@ -333,7 +285,6 @@ function Extension() {
 
       await ensureStorefrontMetafieldAccess();
       await ensureCartTransformActive();
-      await ensureCartValidationActive();
 
       const result = await adminFetch(
         `mutation SetGwpConfig($ownerId: ID!, $namespace: String!, $key: String!, $value: String!) {
