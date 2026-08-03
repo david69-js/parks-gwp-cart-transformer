@@ -9,6 +9,9 @@ query CartTransformRunInput {
           id
         }
       }
+      giftMarker: attribute(key: "_gwp_gift") {
+        value
+      }
     }
   }
   shop {

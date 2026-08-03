@@ -11,7 +11,8 @@
             "merchandise": {
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/100"
-            }
+            },
+            "giftMarker": null
           }
         ]
       },

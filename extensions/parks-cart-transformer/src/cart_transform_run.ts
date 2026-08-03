@@ -46,12 +46,20 @@ export function cartTransformRun(input: CartTransformRunInput): CartTransformRun
     return NO_CHANGES;
   }
 
-  // Match on merchandise id only (not a line property) - a customer can
-  // reach the gift variant's own product page and add it "for real", and
-  // any such line needs to be price-clamped/folded too, same as the
-  // validation function's enforcement.
+  // Match on merchandise id AND the "_gwp_gift" marker property. Unlike the
+  // old (pre-Plus) design, the gift variant's catalog price is no longer
+  // assumed to be $0 - only the auto-added, marked line should be free. A
+  // customer who separately adds more of the same variant "for real" (no
+  // marker - e.g. from its own product page) gets a completely untouched
+  // line at its normal catalog price; it must NOT be folded into the free
+  // line or have its price clamped. The validation function applies the
+  // same marker filter for the same reason - see GWP-PLAN.md ("marker
+  // pivot").
   const giftLines = input.cart.lines.filter(
-    (line) => line.merchandise.__typename === "ProductVariant" && line.merchandise.id === configuration.gift_variant_id,
+    (line) =>
+      line.merchandise.__typename === "ProductVariant" &&
+      line.merchandise.id === configuration.gift_variant_id &&
+      line.giftMarker?.value === "true",
   );
 
   console.log(

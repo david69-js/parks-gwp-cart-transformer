@@ -7,7 +7,7 @@
         "lines": [
           {
             "id": "gid://shopify/CartLine/1",
-            "quantity": 2,
+            "quantity": 1,
             "merchandise": {
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"
@@ -23,9 +23,7 @@
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"
             },
-            "giftMarker": {
-              "value": "true"
-            }
+            "giftMarker": null
           }
         ]
       },
@@ -41,33 +39,15 @@
     "output": {
       "operations": [
         {
-          "linesMerge": {
-            "parentVariantId": "gid://shopify/ProductVariant/999",
-            "cartLines": [
-              {
-                "cartLineId": "gid://shopify/CartLine/1",
-                "quantity": 2
-              },
-              {
-                "cartLineId": "gid://shopify/CartLine/2",
-                "quantity": 1
-              }
-            ],
+          "lineUpdate": {
+            "cartLineId": "gid://shopify/CartLine/1",
             "price": {
-              "percentageDecrease": {
-                "value": "100.0"
+              "adjustment": {
+                "fixedPricePerUnit": {
+                  "amount": "0.00"
+                }
               }
-            },
-            "attributes": [
-              {
-                "key": "_gwp_gift",
-                "value": "true"
-              },
-              {
-                "key": "Gift",
-                "value": "Free Gift With Purchase"
-              }
-            ]
+            }
           }
         }
       ]

@@ -117,6 +117,76 @@ siendo buena práctica tener un variant dedicado exclusivamente al regalo
 100% de descuento no termine regalando por error una variante que también se
 vende normalmente.
 
+### 4. Marker pivot: transform y validation ahora filtran por `_gwp_gift`
+
+Consecuencia directa del punto 3: como el catálogo ya no es la fuente del $0,
+el mismo variant puede tener un precio real (ej. $25) y a la vez tener una
+línea clampeada a $0 por la función. Esto significa que ya NO es seguro tratar
+"cualquier línea que matchee el variant" como "el regalo" — un cliente que
+agrega genuinamente una segunda unidad del mismo variant (sin pasar por el
+JS del theme, por ende sin la property `_gwp_gift: true`) espera pagar precio
+normal por ella, y no debería:
+- que esa línea también se clampe a $0 (regalarla sin querer), ni
+- que cuente para las reglas de "subtotal mínimo" / "máximo 1 regalo" y le
+  bloquee el checkout con "Only one free gift is allowed" por algo que está
+  pagando de verdad.
+
+**Decisión del usuario:** filtrar por el marker `_gwp_gift: true` en AMBAS
+funciones (no solo en el transform):
+- `parks-cart-transformer`: solo las líneas marcadas se clampan a $0 /
+  se fusionan. Cualquier línea del mismo variant sin la marca queda
+  completamente intacta, a su precio real de catálogo.
+- `parks-cart-checkout-validation`: solo las líneas marcadas cuentan para
+  `giftQuantity` (subtotal mínimo y "máximo 1 regalo"). Una línea sin marca
+  nunca bloquea el checkout.
+
+Esto revierte una decisión de diseño anterior (match por variant id
+ignorando el marker, heredada de cuando el catálogo SIEMPRE tenía el variant
+en $0 y no hacía falta distinguir). El riesgo aceptado: alguien con acceso
+técnico (API directa, otra app) podría en teoría intentar falsificar la
+property `_gwp_gift: true` para regalarse el variant - pero eso ya requiere
+salir del flujo normal de storefront/checkout, fuera del alcance de esta app.
+
+El transform ya agrega `_gwp_gift`/`Gift` como attributes al fusionar líneas
+duplicadas (`linesMerge.attributes`), así que la línea resultante del merge
+sigue estando marcada para que la validation function la siga reconociendo
+correctamente después del merge.
+
+### 5. BUG REAL encontrado en vivo: la validation function nunca se ejecutaba
+
+Probando en vivo (`testing-david-plus.myshopify.com`), el usuario reportó que
+el checkout dejaba pasar 4 unidades de regalo sin bloquear. Diagnóstico en
+`.shopify/logs`: **53 invocaciones registradas de `parks-cart-transformer`,
+0 de `parks-cart-checkout-validation`, nunca** - la función ni siquiera se
+estaba ejecutando (no era un bug de lógica en `cartValidationsGenerateRun`).
+
+Causa raíz: a diferencia de la referencia `free-gift-gwp-validation` (que
+tampoco lo tenía y probablemente nunca se probó en vivo), a esta función le
+faltaba una activación explícita vía la mutación `validationCreate` -
+exactamente el mismo tipo de paso que `cartTransformCreate` hace para el Cart
+Transform, pero para functions de tipo `cart.validations.generate.run`.
+Sin esa llamada, la extensión se compila y se registra en el bundle (se ve en
+`.shopify/dev-bundle/manifest.json`), pero Shopify nunca la invoca.
+
+Arreglado:
+- Scope `write_validations` agregado a `shopify.app.toml` (requerido por
+  `validationCreate`).
+- `ensureCartValidationActive()` en `ActionExtension.jsx`: primero consulta
+  `validations(first: 50) { nodes { shopifyFunction { handle } } }` para ver
+  si ya existe una Validation con `handle: "parks-cart-checkout-validation"`
+  (no hay un código de error "ya existe" confirmado para `validationCreate`,
+  así que se evita duplicar validaciones - el store tiene un tope de 25). Si
+  no existe, llama `validationCreate` con `enable: true, blockOnFailure: true`.
+  Se ejecuta en cada guardado, junto a `ensureStorefrontMetafieldAccess` y
+  `ensureCartTransformActive`.
+
+**Acción pendiente para que esto tome efecto:** el nuevo scope
+`write_validations` requiere reinstalar/reautorizar la app en la tienda de
+desarrollo, y después volver a abrir la Admin Action del producto y darle
+"Save" una vez más (para que `ensureCartValidationActive()` se ejecute y
+active la validación). Sin ese re-save, la validation function seguirá sin
+activarse aunque el código ya esté correcto.
+
 ## Qué cambia respecto a `free-gift-gwp-validation`
 
 - **Admin action**: código reutilizado casi verbatim + se agrega

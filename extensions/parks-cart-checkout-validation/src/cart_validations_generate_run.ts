@@ -51,19 +51,31 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
     return { operations: [] };
   }
 
-  // Count EVERY line matching the gift variant, marked or not, and sum
-  // their quantity. This is intentionally NOT rewritten to "read the
-  // quantity of the one merged line" even though the cart-transform
-  // function (parks-cart-transformer) now merges duplicate gift lines into
-  // one via `linesMerge` - that merge is an experimental, unverified-in-
-  // production pattern (see GWP-PLAN.md). Summing across all matching lines
-  // is exactly equivalent to "the single merged line's quantity" when the
-  // merge succeeds, but stays correct as a server-side backstop even if the
-  // merge silently fails to consolidate anything. This is the layer that
-  // can't be bypassed by skipping the storefront or the transform.
+  // Count lines matching the gift variant AND carrying the "_gwp_gift"
+  // marker, and sum their quantity. This store is on Shopify Plus (see
+  // GWP-PLAN.md, "Plus pivot") - the cart-transform function
+  // (parks-cart-transformer) clamps the marked line's price to $0 via
+  // `lineUpdate`/`linesMerge`, so the gift variant's catalog price is no
+  // longer assumed to be $0. That means an UNMARKED line of the same
+  // variant is a genuine, normal-price purchase (e.g. the customer buying
+  // an extra one for real) and must NOT count against "only one free gift"
+  // or the minimum-subtotal gate - counting it would incorrectly block a
+  // customer who is paying full price for it.
+  //
+  // Cart Transform functions run before this one (transform -> discounts ->
+  // validation), so by the time this runs, duplicate marked lines have
+  // already been folded into a single merged line by `linesMerge` - summing
+  // is exactly equivalent to "the one merged line's quantity" in that case,
+  // and stays correct as a server-side backstop if that merge (an
+  // experimental, unverified-in-production pattern) fails to consolidate
+  // anything. This is the layer that can't be bypassed by skipping the
+  // storefront or the transform.
   const giftQuantity = input.cart.lines
     .filter(
-      (line) => line.merchandise.__typename === "ProductVariant" && line.merchandise.id === configuration.gift_variant_id,
+      (line) =>
+        line.merchandise.__typename === "ProductVariant" &&
+        line.merchandise.id === configuration.gift_variant_id &&
+        line.giftMarker?.value === "true",
     )
     .reduce((total, line) => total + line.quantity, 0);
 

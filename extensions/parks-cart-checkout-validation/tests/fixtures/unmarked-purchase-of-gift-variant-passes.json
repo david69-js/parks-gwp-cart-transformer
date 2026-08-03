@@ -39,16 +39,7 @@
       "operations": [
         {
           "validationAdd": {
-            "errors": [
-              {
-                "message": "Your order must be at least $100.00 to qualify for the free gift.",
-                "target": "$.cart"
-              },
-              {
-                "message": "Only one free gift is allowed per order.",
-                "target": "$.cart"
-              }
-            ]
+            "errors": []
           }
         }
       ]
