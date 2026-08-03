@@ -1,0 +1,32 @@
+query CartValidationsGenerateRunInput {
+  localization {
+    country {
+      isoCode
+    }
+  }
+  cart {
+    cost {
+      subtotalAmount {
+        amount
+        currencyCode
+      }
+    }
+    lines {
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+        }
+      }
+      giftMarker: attribute(key: "_gwp_gift") {
+        value
+      }
+    }
+  }
+  shop {
+    metafield(namespace: "$app:gwp", key: "config") {
+      jsonValue
+    }
+  }
+}

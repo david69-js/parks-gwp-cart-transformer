@@ -1,0 +1,55 @@
+{
+  "payload": {
+    "export": "cart-validations-generate-run",
+    "target": "cart.validations.generate.run",
+    "input": {
+      "cart": {
+        "cost": {
+          "subtotalAmount": {
+            "amount": "40.00",
+            "currencyCode": "USD"
+          }
+        },
+        "lines": [
+          {
+            "quantity": 1,
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/999"
+            },
+            "giftMarker": {
+              "value": "true"
+            }
+          }
+        ]
+      },
+      "shop": {
+        "metafield": {
+          "jsonValue": {
+            "min_subtotal": 100.0,
+            "gift_variant_id": "gid://shopify/ProductVariant/999"
+          }
+        }
+      },
+      "localization": {
+        "country": {
+          "isoCode": "US"
+        }
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "Your order must be at least $100.00 to qualify for the free gift.",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,148 @@
+# GWP Cart Transformer — plan y contexto
+
+App extension-only de Shopify: "Gift With Purchase" (regalo gratis al superar un
+subtotal mínimo). Basada en la arquitectura de `free-gift-gwp-validation`
+(proyecto hermano, mismo repo padre), simplificando la consolidación de líneas
+duplicadas del regalo con un Cart Transform Function (`linesMerge`) en vez de
+lógica JS en el storefront.
+
+Tienda destino: **confirmado Shopify Plus** (ver "Pivote a Plus" más abajo).
+`lineUpdate` / price override en `linesMerge` SÍ se usan, para no depender de
+que el merchant configure el variant regalo en $0 manualmente en el catálogo.
+
+## Las 4 extensiones
+
+| Extensión | Handle | Tipo | Rol |
+|---|---|---|---|
+| Admin action | `parks-admin-action-ui` | `ui_extension` (admin.product-details.action.render) | UI para elegir producto/variant regalo, min_subtotal, status, test mode/tag. Guarda todo en `shop.metafields['$app:gwp']['config']`. Registra la metafield definition (storefront PUBLIC_READ) y activa el Cart Transform (`cartTransformCreate`), ambos de forma idempotente. |
+| Theme extension | `parks-theme-extension` | `theme` (app embed block) | Lee el config vía Liquid, lo inyecta en `<script id="gwp-config">`, y el JS agrega/quita la línea del regalo según el subtotal califique o no. |
+| Cart Transform Function | `parks-cart-transformer` | `function` (`cart.transform.run`) | 1 línea del `gift_variant_id` → `lineUpdate` la clampa a $0. 2+ líneas → `linesMerge` las fusiona en una Y la clampa a $0 en la misma operación. **Única pieza nueva respecto a la referencia.** |
+| Cart & Checkout Validation Function | `parks-cart-checkout-validation` | `function` (`cart.validations.generate.run`) | Server-side enforcement: bloquea el checkout si el regalo está en el carrito y el subtotal no alcanza el mínimo, o si la cantidad total del regalo supera 1. No confía en el JS ni en el transform. |
+
+Metafield compartido por todas: shop metafield `$app:gwp.config` (json):
+`status` (active/draft), `min_subtotal`, `gift_variant_id`, `test_mode`,
+`test_tag[]`.
+
+Access scopes (`shopify.app.toml`): `read_products, write_products,
+read_customers, write_cart_transforms`.
+
+## Decisiones tomadas explícitamente con el usuario (no asumidas)
+
+### 1. `linesMerge` self-referencing — EXPERIMENTAL, sin confirmar en la doc de Shopify
+
+Investigué la doc oficial (`shopify.dev/docs/api/functions/latest/cart-transform`)
+y varios issues de `Shopify/function-examples` / `Shopify/shopify-function-javascript`.
+Todos los ejemplos reales de `linesMerge` usan un `parentVariantId` **distinto**
+de los variants fusionados (patrón de bundle: N componentes → 1 variant bundle
+dedicado). Ninguna fuente confirma ni descarta que `parentVariantId` pueda ser
+el **mismo** variant que las líneas fusionadas (nuestro caso: 2+ líneas del
+mismo variant regalo → 1 línea de ese mismo variant), ni cómo se calcula la
+cantidad resultante en ese caso degenerado (asumimos: suma de las cantidades
+de las líneas de entrada, ya que es la única lectura razonable del campo
+`CartLineInput.quantity`, pero no está documentado).
+
+**Decisión del usuario:** proceder con self-referencing (`parentVariantId =
+gift_variant_id`) igualmente, aceptando que es un uso no documentado. Marcado
+explícitamente en el código como EXPERIMENTAL. **Antes de confiar en esto en
+producción, hay que verificarlo en vivo** con `shopify app dev` contra un
+carrito real: agregar el variant regalo dos veces (dos llamadas separadas a
+`/cart/add.js` o una app externa) y confirmar que efectivamente colapsa en una
+sola línea, y qué cantidad muestra. Los tests locales (vitest +
+shopify-function-test-helpers) sólo validan la forma del output contra el
+schema — no ejecutan el motor de checkout real, así que no prueban que Shopify
+acepte/renderice esto correctamente.
+
+Si la verificación en vivo muestra que no funciona (error, o no fusiona), hay
+que revertir esta función a `NO_CHANGES` y devolver la consolidación de
+duplicados al JS del storefront (ver más abajo, código removido pero fácil de
+restaurar desde `free-gift-gwp-validation`).
+
+### 2. El parche de retry atómico del 422 se MANTIENE (no se elimina)
+
+El plan original asumía que `linesMerge` volvía innecesario tanto (a) consolidar
+duplicados en JS como (b) el parche de retry atómico ante 422. Verifiqué que
+son dos problemas distintos:
+
+- **(a) Consolidar duplicados** — sí resuelto por `linesMerge`. Se quita del JS.
+- **(b) Deadlock del 422** — la validation function puede rechazar un cambio
+  de cantidad en la línea **del cliente** (no la del regalo) si ese cambio
+  bajaría el subtotal por debajo del mínimo mientras el regalo sigue presente,
+  **incluso con una sola línea de regalo, sin ningún duplicado**. `linesMerge`
+  no toca este escenario para nada (no hay líneas duplicadas involucradas).
+  Eliminar el parche reintroduciría este deadlock (cliente atascado sin poder
+  bajar su cantidad).
+
+**Decisión del usuario:** mantener el parche de retry atómico intacto. Sólo se
+quita la lógica de "consolidar duplicados" (dejar 1 y borrar el resto).
+
+### 3. Pivote a Plus: se habilita el price-clamp con `lineUpdate`/`linesMerge`
+
+Toda la premisa inicial del proyecto (y el comentario `GWP_LINE_UPDATE_TODO`
+que dejamos como flag) asumía que la tienda destino **no** era Plus. El
+usuario confirmó después (con captura de `Settings → Plan` mostrando "Plus")
+que **sí lo es**. Esto invalida la razón original para no usar `lineUpdate`, y
+abre la puerta a que el $0 del regalo ya no dependa de que el merchant
+configure manualmente el variant en $0 en el catálogo.
+
+Antes de habilitarlo investigué un detalle importante: un issue reportado en
+`Shopify/function-examples#470` documenta que aplicar una operación `update`
+Y una `merge` sobre la **misma cart line original** dentro del mismo resultado
+de la función hace que Shopify **ignore silenciosamente el cambio de precio**
+del update (contradice la documentación oficial, que dice que ambas deberían
+aplicarse). Para evitar pisar ese bug, el diseño final NO combina
+`lineUpdate` + `linesMerge` sobre la misma línea nunca. En vez de eso:
+
+- **0 o 1 línea de regalo** → `lineUpdate` con
+  `price.adjustment.fixedPricePerUnit.amount = "0.00"` sobre esa línea.
+- **2+ líneas de regalo** → `linesMerge` con su propio campo
+  `price.percentageDecrease.value = "100.0"` (100% de descuento = $0) en la
+  MISMA operación de merge, sin ningún `lineUpdate` adicional. Esto logra
+  "fusionar + poner a $0" sin nunca combinar dos operaciones distintas sobre
+  la misma línea original, que es exactamente el escenario roto del issue
+  #470.
+
+**Cosas sin confirmar todavía (pendientes de verificación en vivo, además del
+punto 1 de self-referencing `linesMerge`):**
+- El formato/escala exacta de `percentageDecrease.value` (asumido 0-100,
+  como en las Discount Functions de Shopify; ningún ejemplo oficial de
+  `linesMerge`/`merge` con `price` lo confirma con un valor concreto).
+- Que `linesMerge` con `price` funcione igual de bien en el caso
+  self-referencing (parentVariantId = variant fusionado) que en el caso
+  normal de bundle documentado.
+
+Esto significa que **ya no hace falta** que el merchant ponga el variant
+regalo en $0 en el catálogo — el $0 ahora lo fuerza la función. Sí sigue
+siendo buena práctica tener un variant dedicado exclusivamente al regalo
+(oculto, no vendible por otra vía) para que un `lineUpdate`/`linesMerge` con
+100% de descuento no termine regalando por error una variante que también se
+vende normalmente.
+
+## Qué cambia respecto a `free-gift-gwp-validation`
+
+- **Admin action**: código reutilizado casi verbatim + se agrega
+  `ensureCartTransformActive()` (idéntico en espíritu al commit `79ebec7` del
+  proyecto de referencia, adaptado al handle `parks-cart-transformer`).
+- **Theme extension JS**: se elimina `installGiftThresholdRetry` NO — eso se
+  queda. Se elimina únicamente el branch `giftLines.length > 1` (consolidar
+  duplicados) de `syncGiftLine`. Se conserva el ajuste de cantidad a 1 cuando
+  hay exactamente una línea de regalo con cantidad ≠ 1 (no es lo mismo que
+  "consolidar duplicados": no hay ninguna otra línea involucrada, así que no
+  reintroduce el problema del retry atómico).
+- **Cart Transform Function**: nueva, y con price-clamp activo (ver "Pivote a
+  Plus" arriba) — la tienda destino confirmó ser Plus, así que sí se usa
+  `lineUpdate`/`linesMerge` con `price` para forzar el $0 server-side, evitando
+  depender de que el catálogo tenga el variant en $0.
+- **Cart & Checkout Validation Function**: lógica de negocio sin cambios
+  (sigue sumando la cantidad de TODAS las líneas que matcheen el
+  `gift_variant_id`, marcadas o no — esto YA es equivalente a "revisar la
+  cantidad de la única línea fusionada" cuando el merge funciona, y sigue
+  siendo la defensa correcta si el merge experimental fallara). Se documenta
+  esta razón en un comentario para que quede explícito que es una decisión, no
+  un olvido.
+
+## Estado de implementación
+
+Ver TaskList de la sesión. Extensiones ya scaffoldeadas por el CLI con handles
+correctos (`parks-admin-action-ui`, `parks-theme-extension`,
+`parks-cart-transformer`, `parks-cart-checkout-validation`) — falta reemplazar
+el contenido placeholder por la lógica real descrita arriba.

@@ -1,0 +1,31 @@
+{
+  "payload": {
+    "export": "cart-transform-run",
+    "target": "cart.transform.run",
+    "input": {
+      "cart": {
+        "lines": [
+          {
+            "id": "gid://shopify/CartLine/1",
+            "quantity": 1,
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/111"
+            }
+          }
+        ]
+      },
+      "shop": {
+        "metafield": {
+          "jsonValue": {
+            "min_subtotal": 100.0,
+            "gift_variant_id": "gid://shopify/ProductVariant/999"
+          }
+        }
+      }
+    },
+    "output": {
+      "operations": []
+    }
+  }
+}

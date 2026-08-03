@@ -1,0 +1,19 @@
+query CartTransformRunInput {
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+        }
+      }
+    }
+  }
+  shop {
+    metafield(namespace: "$app:gwp", key: "config") {
+      jsonValue
+    }
+  }
+}
