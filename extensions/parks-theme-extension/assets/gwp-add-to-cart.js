@@ -34,6 +34,17 @@
   var GIFT_MESSAGE_VALUE = 'Free Gift With Purchase';
   var syncing = false;
   var syncQueued = false;
+  // If a cleanup removal gets rejected by the validation function (or fails
+  // for any other reason), Liquid Ajax Cart still dispatches
+  // 'liquid-ajax-cart:request-end' for the failed request, which
+  // immediately re-triggers syncGiftLine -> another removal attempt ->
+  // another failed request-end event, forever, as fast as the network
+  // allows. Confirmed live: this produced dozens of requests/second against
+  // the store. This cooldown caps retries to once per interval; the poll
+  // (10s) still guarantees eventual cleanup once whatever is blocking it
+  // resolves.
+  var CLEANUP_RETRY_COOLDOWN_MS = 5000;
+  var lastCleanupAttemptAt = 0;
 
   function hasLiquidAjaxCart() {
     return typeof window.liquidAjaxCart !== 'undefined' && window.liquidAjaxCart !== null;
@@ -150,10 +161,26 @@
   // NOTE: this is a different problem from duplicate gift lines (that's
   // handled by the Cart Transform now) - it can happen with a single,
   // perfectly normal gift line, so it stays here regardless.
+  //
+  // Confirmed live: this same 422 also fires for OUR OWN removal attempt
+  // (/cart/change.js on the gift line itself, quantity -> 0) whenever the
+  // buyer stops qualifying (e.g. logs out). The validation function
+  // evaluates the line's quantity as it was BEFORE this specific change is
+  // applied, so a single-line quantity-0 request on the gift line still
+  // sees giftQuantity > 0 and gets blocked by the same rule meant to keep
+  // it out of the cart - the removal can never land as a lone
+  // /cart/change.js call. It must go through the same atomic combined
+  // /cart/update.js retry as the subtotal case, which evaluates the final
+  // requested state (quantity 0) instead of the pre-mutation one.
+  var GIFT_BLOCKED_MESSAGES = ['qualify for the free gift', 'log in to your account to receive the free gift'];
+
   function isGiftThresholdError(status, body) {
     if (status !== 422) return false;
     var message = body && (body.message || body.description);
-    return typeof message === 'string' && message.indexOf('qualify for the free gift') !== -1;
+    if (typeof message !== 'string') return false;
+    return GIFT_BLOCKED_MESSAGES.some(function (fragment) {
+      return message.indexOf(fragment) !== -1;
+    });
   }
 
   // Confirmed live: Liquid Ajax Cart sends a JSON string body when we call
@@ -273,6 +300,12 @@
             status: config.status, country: config.country, currency: config.currency, giftLineCount: giftLines.length,
           });
           if (giftLines.length > 0) {
+            var now = Date.now();
+            if (now - lastCleanupAttemptAt < CLEANUP_RETRY_COOLDOWN_MS) {
+              console.log('[GWP] cleanup already attempted recently, waiting before retrying');
+              return;
+            }
+            lastCleanupAttemptAt = now;
             return removeLines(giftLines);
           }
           return;

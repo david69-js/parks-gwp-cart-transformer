@@ -400,6 +400,73 @@ include `"buyerIdentity": {"isAuthenticated": true}`; two new fixtures
 `not-authenticated-blocks-checkout.json` for validation) cover the blocked
 case.
 
+**Live-verified after deploy (`parks-gwp-cart-transformer-4`)** on
+`testing-david-plus.myshopify.com`: logged-in + qualifying subtotal → gift
+added at $0, a second add attempt correctly blocked ("Only one free gift is
+allowed per order"); logged out (via `/account/logout`) + qualifying
+subtotal → gift add correctly blocked with the new "Please log in..."
+error, no line ever added.
+
+**KNOWN ISSUE, not fully resolved: auto-removal of a disqualified gift line
+from the cart is unreliable.** When a customer logs out (or otherwise stops
+qualifying) while a marked gift line is already in the cart, the theme JS
+correctly detects this on the next sync (`offerApplies()` false,
+`giftLines.length > 0`) and calls `removeLines()`, which does
+`/cart/change.js` with `quantity: 0`. Live-confirmed this specific call
+gets rejected with a 422 from OUR OWN validation function - the input it
+receives still shows the gift line at quantity 1, so `giftQuantity > 0` and
+the new "must be logged in" rule blocks the very request meant to remove
+it. The existing atomic-retry mechanism (`retryBlockedChangeAsCombinedUpdate`,
+originally built for the subtotal-threshold case) was extended to also
+catch this message (`GIFT_BLOCKED_MESSAGES` in `gwp-add-to-cart.js`), but a
+combined `/cart/update.js` retry was ALSO observed getting 422'd in live
+testing - inconclusive whether that's a genuine platform constraint (the
+line still appears "present" to validation regardless of request shape) or
+an artifact of a contaminated multi-tab test session (see below). Not
+resolved with full confidence; flagged here rather than silently declared
+fixed.
+
+What IS solid regardless: the two server-side layers that actually
+guarantee "anonymous never gets a free gift" - the Cart Transform (won't
+clamp price to $0 without `isAuthenticated`) and the Validation function
+(blocks checkout outright if a marked line is present and unauthenticated)
+- were live-verified working. If the JS can't auto-remove the stale line,
+worst case the customer sees a non-free extra line they can remove
+manually (confirmed working via the cart's own quantity/remove controls),
+or checkout blocks them with a clear message. No free-gift leakage in
+either case - only the "cart auto-cleans itself invisibly" convenience is
+what's in question.
+
+**Also added defensively, independent of the above:** a `CLEANUP_RETRY_COOLDOWN_MS`
+(5s) guard in `syncGiftLine()`. Without it, a removal attempt that keeps
+getting rejected re-triggers on every `liquid-ajax-cart:request-end` event
+(including failed ones), retrying as fast as the network allows - live
+testing produced dozens of requests/second against the store this way and
+tripped Shopify's own rate limiting and a Cloudflare CAPTCHA on the test
+store. The cooldown caps automatic retries to once per interval regardless
+of root cause; this fix is not in question, unlike the removal mechanism
+above.
+
+**Test-session caveat:** the live debugging session that produced the
+above findings got heavily contaminated - multiple stray `shopify app dev`
+processes overriding the theme's extension preview at different times, a
+leftover draft "Development" theme with its own stale dev-preview cookie
+that silently redirected testing away from the real published theme for a
+stretch, and eventually Shopify's own bot-protection (429s, then a
+Cloudflare CAPTCHA) from the sheer request volume. Several early
+conclusions in this session were revised after discovering the actual
+theme/version being tested was wrong. Treat the "known issue" above as
+worth re-verifying with a single clean tab against the real published
+theme (no dev preview active) before treating it as fully characterized.
+
+**QA gotcha, not a bug:** `#gwp-config` (including `logged_in` and
+`customer_tags`) is rendered server-side by Liquid at page load, same as
+`country`/`currency` - it does NOT update reactively if the customer logs
+in/out without a full page reload. A stale/un-refreshed page can show
+`logged_in: false` right after logging in. Always reload the page being
+tested after any login/logout before checking `#gwp-config` or reporting a
+mismatch.
+
 ## What's different from `free-gift-gwp-validation`
 
 - **Admin action**: code reused almost verbatim + adds
