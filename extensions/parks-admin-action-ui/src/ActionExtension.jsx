@@ -46,11 +46,53 @@ async function ensureStorefrontMetafieldAccess() {
 
     const userErrors = result.metafieldDefinitionCreate.userErrors;
     const isAlreadyExists = userErrors.some((e) => e.code === "TAKEN");
-    if (userErrors.length > 0 && !isAlreadyExists) {
+
+    if (isAlreadyExists) {
+      // A definition already exists, but not necessarily with storefront
+      // access: if it was ever recreated without it (e.g. after the app's
+      // data was wiped by "Clean dev preview" in the Shopify Dev Console),
+      // creation keeps returning TAKEN while the theme app extension can no
+      // longer read `shop.metafields['$app:gwp']['config']` in Liquid, so
+      // the storefront silently renders nothing at all. Reasserting access
+      // on every save makes this genuinely idempotent instead of
+      // create-once-and-hope.
+      await forceStorefrontAccess();
+      return;
+    }
+
+    if (userErrors.length > 0) {
       console.error("GWP metafield definition userErrors", userErrors);
     }
   } catch (e) {
     console.error("GWP metafield definition creation failed", e);
+  }
+}
+
+async function forceStorefrontAccess() {
+  try {
+    const result = await adminFetch(
+      `mutation ForceGwpStorefrontAccess($definition: MetafieldDefinitionUpdateInput!) {
+        metafieldDefinitionUpdate(definition: $definition) {
+          updatedDefinition { id }
+          userErrors { field message code }
+        }
+      }`,
+      {
+        definition: {
+          namespace: NAMESPACE,
+          key: KEY,
+          ownerType: "SHOP",
+          access: {admin: "MERCHANT_READ", storefront: "PUBLIC_READ"},
+        },
+      },
+    );
+
+    const userErrors = result.metafieldDefinitionUpdate.userErrors;
+    if (userErrors.length > 0) {
+      console.error("GWP metafield definition access update userErrors", userErrors);
+    }
+  } catch (e) {
+    console.error("GWP metafield definition access update failed", e);
   }
 }
 

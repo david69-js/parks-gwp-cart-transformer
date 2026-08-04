@@ -466,6 +466,24 @@ transform correctly refused to clamp it) -> on page load the line was
 removed automatically, no manual action, and zero cart requests in the
 following 8 seconds (previously dozens per second).
 
+**Debugging gotcha that cost hours - check this FIRST:** if the storefront
+renders no `#gwp-config` and no `gwp-add-to-cart.js` at all, the app is
+probably fine and the browser is simply being served a different theme.
+Confirm with `Shopify.theme.id` / `Shopify.theme.name` in the console and
+compare against the active theme. A `shopify app dev` session creates a
+development theme and pins the browser to it with a preview cookie that
+survives killing the process; that theme does not have the app embed
+enabled, so the block renders nothing and it looks exactly like the config
+metafield was deleted. It was not - verify with GraphiQL (the CLI exposes
+it on port 3457 during `shopify app dev`):
+
+    query { shop { metafield(namespace: "app--<app_id>--gwp", key: "config") { value } } }
+    query { metafieldDefinitions(first: 25, ownerType: SHOP) { nodes { namespace key access { storefront } } } }
+
+Recover by loading `?preview_theme_id=<active_theme_id>` (or "Exit preview"
+in the storefront bar), then "Clean dev preview" in the Dev Console so the
+released app version is served instead of the dev bundle.
+
 **Test-session caveat:** the live debugging session that produced the
 findings in this section got heavily contaminated - multiple stray `shopify app dev`
 processes overriding the theme's extension preview at different times, a
