@@ -366,6 +366,40 @@ function stays technically "active" in Shopify but is a total no-op
 there are never any marked lines to evaluate — the effect for the merchant
 and the customer is identical to it being disabled.
 
+### 10. The offer requires a logged-in customer (all 3 enforcement layers)
+
+**User's decision:** an anonymous (not logged in) visitor must never receive
+the free gift, regardless of subtotal/country/status. Live-tested and found
+this was NOT previously enforced anywhere — with `test_mode` off, any
+visitor (logged in or not) that met the subtotal/US/USD conditions got the
+gift. Fixed in all 3 layers, mirroring the existing `status: "draft"`
+pattern:
+
+- **Theme JS** (`gwp-add-to-cart.js`): `offerApplies()` now also requires
+  `config.logged_in`, sourced from a new `"logged_in"` key in the
+  `#gwp-config` script tag (`gwp-add-to-cart.liquid`), set from Liquid's
+  `{% if customer %}`. If the customer logs out mid-session and a marked
+  line already exists, the next sync removes it, same as any other
+  "no longer qualifies" condition.
+- **Cart Transform** (`cart_transform_run.ts`): queries
+  `cart.buyerIdentity.isAuthenticated` and returns `NO_CHANGES` if false,
+  right after the `status: "draft"` check - a marked line on an anonymous
+  cart is not clamped to $0.
+- **Validation function** (`cart_validations_generate_run.ts`): also queries
+  `cart.buyerIdentity.isAuthenticated`; if a marked gift line is present
+  (`giftQuantity > 0`) and the buyer isn't authenticated, checkout is
+  blocked with "Please log in to your account to receive the free gift." -
+  this is the layer that can't be bypassed by skipping the storefront.
+
+Both function `.graphql` input queries were updated to request
+`buyerIdentity { isAuthenticated }` and their `generated/api.ts` types were
+regenerated (`shopify app function typegen`) accordingly. All pre-existing
+test fixtures that expect the gift to actually apply were updated to
+include `"buyerIdentity": {"isAuthenticated": true}`; two new fixtures
+(`not-authenticated-leaves-marked-line-untouched.json` for the transform,
+`not-authenticated-blocks-checkout.json` for validation) cover the blocked
+case.
+
 ## What's different from `free-gift-gwp-validation`
 
 - **Admin action**: code reused almost verbatim + adds

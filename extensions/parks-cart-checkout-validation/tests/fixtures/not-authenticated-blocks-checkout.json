@@ -5,11 +5,11 @@
     "input": {
       "cart": {
         "buyerIdentity": {
-          "isAuthenticated": true
+          "isAuthenticated": false
         },
         "cost": {
           "subtotalAmount": {
-            "amount": "50.00",
+            "amount": "150.00",
             "currencyCode": "USD"
           }
         },
@@ -20,12 +20,19 @@
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"
             },
-            "giftMarker": null
+            "giftMarker": {
+              "value": "true"
+            }
           }
         ]
       },
       "shop": {
-        "metafield": null
+        "metafield": {
+          "jsonValue": {
+            "min_subtotal": 100.0,
+            "gift_variant_id": "gid://shopify/ProductVariant/999"
+          }
+        }
       },
       "localization": {
         "country": {
@@ -34,7 +41,18 @@
       }
     },
     "output": {
-      "operations": []
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "Please log in to your account to receive the free gift.",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
     }
   }
 }

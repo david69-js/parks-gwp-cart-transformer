@@ -1,5 +1,8 @@
 query CartTransformRunInput {
   cart {
+    buyerIdentity {
+      isAuthenticated
+    }
     lines {
       id
       quantity

@@ -62,6 +62,9 @@
     if (config.status !== 'active') {
       return false;
     }
+    if (!config.logged_in) {
+      return false;
+    }
     if (config.country !== 'US' || config.currency !== 'USD') {
       return false;
     }

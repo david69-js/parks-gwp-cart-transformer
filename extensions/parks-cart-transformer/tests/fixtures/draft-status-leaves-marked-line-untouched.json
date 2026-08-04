@@ -4,6 +4,9 @@
     "target": "cart.transform.run",
     "input": {
       "cart": {
+        "buyerIdentity": {
+          "isAuthenticated": true
+        },
         "lines": [
           {
             "id": "gid://shopify/CartLine/1",

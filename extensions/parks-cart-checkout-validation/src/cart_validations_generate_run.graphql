@@ -5,6 +5,9 @@ query CartValidationsGenerateRunInput {
     }
   }
   cart {
+    buyerIdentity {
+      isAuthenticated
+    }
     cost {
       subtotalAmount {
         amount

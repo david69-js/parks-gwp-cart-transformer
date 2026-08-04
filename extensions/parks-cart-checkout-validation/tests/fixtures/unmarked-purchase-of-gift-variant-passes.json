@@ -4,6 +4,9 @@
     "target": "cart.validations.generate.run",
     "input": {
       "cart": {
+        "buyerIdentity": {
+          "isAuthenticated": true
+        },
         "cost": {
           "subtotalAmount": {
             "amount": "40.00",

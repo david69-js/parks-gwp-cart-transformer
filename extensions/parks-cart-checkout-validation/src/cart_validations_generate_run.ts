@@ -84,6 +84,18 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
   const errors: ValidationError[] = [];
 
   if (giftQuantity > 0) {
+    // The offer requires a logged-in customer. Anonymous checkout with a
+    // marked gift line must be blocked here even though the theme JS
+    // already tries not to add the gift in that case - this is the layer
+    // that can't be bypassed by skipping the storefront (e.g. the customer
+    // logged out after the gift was added, or hit checkout directly).
+    if (!input.cart.buyerIdentity?.isAuthenticated) {
+      errors.push({
+        message: "Please log in to your account to receive the free gift.",
+        target: "$.cart",
+      });
+    }
+
     const subtotal = parseFloat(input.cart.cost.subtotalAmount.amount);
 
     if (subtotal < configuration.min_subtotal) {

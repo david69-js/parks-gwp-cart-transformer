@@ -16,7 +16,8 @@
       "currency": {{ cart.currency.iso_code | json }},
       "test_mode": {{ gwp_config.value.test_mode | json }},
       "test_tag": {{ gwp_config.value.test_tag | json }},
-      "customer_tags": {% if customer %}{{ customer.tags | json }}{% else %}[]{% endif %}
+      "customer_tags": {% if customer %}{{ customer.tags | json }}{% else %}[]{% endif %},
+      "logged_in": {% if customer %}true{% else %}false{% endif %}
     }
   </script>
   <script src="{{ 'gwp-add-to-cart.js' | asset_url }}" defer="defer"></script>

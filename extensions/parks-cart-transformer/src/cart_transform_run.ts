@@ -58,6 +58,17 @@ export function cartTransformRun(input: CartTransformRunInput): CartTransformRun
     return NO_CHANGES;
   }
 
+  // The offer requires a logged-in customer (see GWP-PLAN.md). If a marked
+  // gift line somehow exists on an anonymous cart (e.g. the customer logged
+  // out mid-session before the theme JS's next sync), it must not stay
+  // clamped to $0 - the validation function also blocks checkout for this
+  // same case, so leaving it here would be the only enforcement layer left
+  // active, same reasoning as the draft-status check above.
+  if (!input.cart.buyerIdentity?.isAuthenticated) {
+    console.log("[GWP transform] buyer not authenticated, doing nothing");
+    return NO_CHANGES;
+  }
+
   // Match on merchandise id AND the "_gwp_gift" marker property. Unlike the
   // old (pre-Plus) design, the gift variant's catalog price is no longer
   // assumed to be $0 - only the auto-added, marked line should be free. A
