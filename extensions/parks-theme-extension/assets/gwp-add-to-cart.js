@@ -175,11 +175,41 @@
     return typeof message === 'string' && message.indexOf('qualify for the free gift') !== -1;
   }
 
-  // Confirmed live: Liquid Ajax Cart sends a JSON string body when we call
-  // its API directly (.change()/.update()), but the theme's own quantity
-  // buttons (data-ajax-cart attributes) submit FormData keyed by "line"
-  // (1-based position in cart.items) and "quantity" - not "id"/"key" - so
-  // both shapes, and both identifier styles, have to be handled.
+  // Three shapes have to be handled, all confirmed live:
+  //   1. JSON string body - when we call Liquid Ajax Cart's API directly
+  //      (.change()/.update()).
+  //   2. FormData keyed by "line" (1-based position in cart.items) and
+  //      "quantity" - theme quantity controls that submit a cart form.
+  //   3. NO body at all, with the change encoded in the URL query string -
+  //      Liquid Ajax Cart's `data-ajax-cart-request-button` attribute, e.g.
+  //      `/cart/change.js?line=2&quantity=1`. This is what the Parks theme's
+  //      drawer cart uses. Missing this case meant a blocked decrease was
+  //      never retried and the customer simply could not lower a quantity
+  //      that would drop the subtotal below the threshold.
+  // Identifiers also vary: "id" (a line key) or "line" (1-based index).
+  function parseChangeRequest(url, init) {
+    var fromBody = parseRequestBody(init);
+    if (fromBody) return fromBody;
+    return parseRequestUrl(url);
+  }
+
+  function parseRequestUrl(url) {
+    var queryIndex = typeof url === 'string' ? url.indexOf('?') : -1;
+    if (queryIndex === -1) return null;
+
+    var params = new URLSearchParams(url.slice(queryIndex + 1));
+    var quantity = params.get('quantity');
+    if (quantity == null) return null;
+
+    var id = params.get('id');
+    if (id) return {id: id, quantity: Number(quantity)};
+
+    var line = params.get('line');
+    if (line) return {line: Number(line), quantity: Number(quantity)};
+
+    return null;
+  }
+
   function parseRequestBody(init) {
     if (!init || init.body == null) return null;
 
@@ -205,8 +235,8 @@
     return null;
   }
 
-  function retryBlockedChangeAsCombinedUpdate(init) {
-    var originalBody = parseRequestBody(init);
+  function retryBlockedChangeAsCombinedUpdate(url, init) {
+    var originalBody = parseChangeRequest(url, init);
     if (!originalBody || originalBody.quantity == null || (originalBody.id == null && originalBody.line == null)) {
       return;
     }
@@ -261,7 +291,11 @@
 
     window.fetch = function (input, init) {
       var url = typeof input === 'string' ? input : (input && input.url) || '';
-      var isCartChange = url.indexOf('/cart/change.js') !== -1;
+      // Matches `/cart/change` as well as `/cart/change.js`: theme markup
+      // built with `{{ routes.cart_change_url }}` produces the extension-less
+      // form. Matching only the `.js` form silently skipped every request the
+      // theme's own quantity buttons make.
+      var isCartChange = url.indexOf('/cart/change') !== -1;
 
       var responsePromise = originalFetch(input, init);
       if (!isCartChange) return responsePromise;
@@ -274,7 +308,7 @@
             .json()
             .then(function (body) {
               if (isGiftThresholdError(response.status, body)) {
-                retryBlockedChangeAsCombinedUpdate(init);
+                retryBlockedChangeAsCombinedUpdate(url, init);
               }
             });
         })
