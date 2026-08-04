@@ -8,6 +8,7 @@ const NO_CHANGES: CartTransformRunResult = {
 };
 
 type Configuration = {
+  status?: string;
   gift_variant_id: string;
 };
 
@@ -43,6 +44,17 @@ export function cartTransformRun(input: CartTransformRunInput): CartTransformRun
 
   if (!configuration?.gift_variant_id) {
     console.log("[GWP transform] no config set, doing nothing");
+    return NO_CHANGES;
+  }
+
+  // status "draft" = the merchant turned GWP off from the admin action. The
+  // gift variant must go back to behaving like a normal product: if for any
+  // reason a marked line still exists (e.g. the theme JS hasn't cleaned it
+  // up yet, or the app embed is off), it must not keep getting clamped to
+  // $0 forever with no other protection active (the validation function
+  // also turns itself off in draft - see GWP-PLAN.md).
+  if (configuration.status === "draft") {
+    console.log("[GWP transform] status draft, doing nothing");
     return NO_CHANGES;
   }
 
