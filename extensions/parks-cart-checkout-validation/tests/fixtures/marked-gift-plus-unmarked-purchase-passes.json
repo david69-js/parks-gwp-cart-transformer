@@ -16,6 +16,11 @@
         "lines": [
           {
             "quantity": 1,
+            "cost": {
+              "amountPerQuantity": {
+                "amount": "0.0"
+              }
+            },
             "merchandise": {
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"
@@ -26,6 +31,11 @@
           },
           {
             "quantity": 1,
+            "cost": {
+              "amountPerQuantity": {
+                "amount": "94.0"
+              }
+            },
             "merchandise": {
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"

@@ -407,48 +407,67 @@ allowed per order"); logged out (via `/account/logout`) + qualifying
 subtotal → gift add correctly blocked with the new "Please log in..."
 error, no line ever added.
 
-**KNOWN ISSUE, not fully resolved: auto-removal of a disqualified gift line
-from the cart is unreliable.** When a customer logs out (or otherwise stops
-qualifying) while a marked gift line is already in the cart, the theme JS
-correctly detects this on the next sync (`offerApplies()` false,
-`giftLines.length > 0`) and calls `removeLines()`, which does
-`/cart/change.js` with `quantity: 0`. Live-confirmed this specific call
-gets rejected with a 422 from OUR OWN validation function - the input it
-receives still shows the gift line at quantity 1, so `giftQuantity > 0` and
-the new "must be logged in" rule blocks the very request meant to remove
-it. The existing atomic-retry mechanism (`retryBlockedChangeAsCombinedUpdate`,
-originally built for the subtotal-threshold case) was extended to also
-catch this message (`GIFT_BLOCKED_MESSAGES` in `gwp-add-to-cart.js`), but a
-combined `/cart/update.js` retry was ALSO observed getting 422'd in live
-testing - inconclusive whether that's a genuine platform constraint (the
-line still appears "present" to validation regardless of request shape) or
-an artifact of a contaminated multi-tab test session (see below). Not
-resolved with full confidence; flagged here rather than silently declared
-fixed.
+**The deadlock this created, and how it was solved.** Emitting a validation
+error for "marked gift line present + not authenticated" broke the theme
+JS's automatic cleanup: an error returned by a cart-validation function
+blocks EVERY cart mutation while the condition holds, *including* the
+`/cart/change.js` (`quantity: 0`) that the script fires to remove that very
+line. Confirmed live from the function-run logs: each removal attempt was
+rejected 422 with our own "Please log in..." message, the failed request
+re-triggered `liquid-ajax-cart:request-end` -> another sync -> another
+rejected removal, at dozens of requests per second (which tripped Shopify's
+rate limiting and a Cloudflare CAPTCHA on the test store). The gift line
+could then only be removed by hand - the opposite of the point of the
+feature.
 
-What IS solid regardless: the two server-side layers that actually
-guarantee "anonymous never gets a free gift" - the Cart Transform (won't
-clamp price to $0 without `isAuthenticated`) and the Validation function
-(blocks checkout outright if a marked line is present and unauthenticated)
-- were live-verified working. If the JS can't auto-remove the stale line,
-worst case the customer sees a non-free extra line they can remove
-manually (confirmed working via the cart's own quantity/remove controls),
-or checkout blocks them with a clear message. No free-gift leakage in
-either case - only the "cart auto-cleans itself invisibly" convenience is
-what's in question.
+The fix is to make the validation function ignore marked lines that aren't
+actually free. The Cart Transform runs BEFORE validation (transform ->
+discounts -> validation), and it only clamps a marked line to $0 when the
+offer genuinely applies (active + authenticated). So the price validation
+sees is already the verdict: a marked line still at its catalog price is
+one the transform deliberately refused to make free - a leftover, not a
+free gift - and validation now treats it as an ordinary purchase and
+returns no errors. The removal is no longer blocked and the cleanup lands
+on the first try. Requires `cost { amountPerQuantity { amount } }` in the
+validation's input query.
 
-**Also added defensively, independent of the above:** a `CLEANUP_RETRY_COOLDOWN_MS`
-(5s) guard in `syncGiftLine()`. Without it, a removal attempt that keeps
-getting rejected re-triggers on every `liquid-ajax-cart:request-end` event
-(including failed ones), retrying as fast as the network allows - live
-testing produced dozens of requests/second against the store this way and
-tripped Shopify's own rate limiting and a Cloudflare CAPTCHA on the test
-store. The cooldown caps automatic retries to once per interval regardless
-of root cause; this fix is not in question, unlike the removal mechanism
-above.
+This keeps the checkout guarantee intact: if a genuinely free ($0) marked
+line ever reaches an unauthenticated cart (i.e. the transform was bypassed
+or failed), `giftQuantity > 0` still holds and checkout is still blocked.
+The two cases are covered by separate fixtures -
+`not-authenticated-blocks-checkout.json` ($0 line -> blocked) and
+`leftover-full-price-gift-line-does-not-block.json` (catalog-price line ->
+no errors, so cleanup can proceed).
+
+**Caveat:** this relies on the gift variant's catalog price NOT being $0
+(consistent with the "Plus pivot" decision - the transform exists precisely
+so the merchant doesn't have to zero it out). If a merchant does set the
+gift variant to $0 in the catalog, a leftover marked line looks "free" to
+validation and the deadlock returns.
+
+**Two supporting guards in `gwp-add-to-cart.js`,** both worth keeping
+independently of the above:
+- `CLEANUP_RETRY_COOLDOWN_MS` (5s) in `syncGiftLine()` - caps automatic
+  cleanup retries so that *any* future condition that blocks a removal
+  degrades into one attempt per interval (the 10s poll still guarantees
+  eventual cleanup) instead of a request storm.
+- A no-op guard in `retryBlockedChangeAsCombinedUpdate()`: if the blocked
+  request only touched a gift line, the "compensating" combined update
+  would be byte-for-byte the request that was just rejected, so retrying it
+  only loops. `isGiftThresholdError` therefore deliberately matches ONLY
+  the subtotal-threshold message - an earlier attempt to also match the
+  login message routed our own removal failures into this retry path and
+  amplified the loop.
+
+**Live-verified after deploy (`parks-gwp-cart-transformer-8`),** against
+the real published theme with all dev previews cleared: anonymous cart
+holding a leftover marked line at its catalog price ($4.00, i.e. the
+transform correctly refused to clamp it) -> on page load the line was
+removed automatically, no manual action, and zero cart requests in the
+following 8 seconds (previously dozens per second).
 
 **Test-session caveat:** the live debugging session that produced the
-above findings got heavily contaminated - multiple stray `shopify app dev`
+findings in this section got heavily contaminated - multiple stray `shopify app dev`
 processes overriding the theme's extension preview at different times, a
 leftover draft "Development" theme with its own stale dev-preview cookie
 that silently redirected testing away from the real published theme for a

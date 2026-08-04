@@ -21,6 +21,7 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
         quantity: line.quantity,
         variantId: line.merchandise.__typename === "ProductVariant" ? line.merchandise.id : null,
         giftMarker: line.giftMarker?.value ?? null,
+        amountPerQuantity: line.cost.amountPerQuantity.amount,
       })),
     ),
   );
@@ -70,12 +71,36 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
   // experimental, unverified-in-production pattern) fails to consolidate
   // anything. This is the layer that can't be bypassed by skipping the
   // storefront or the transform.
+  // ...AND that is actually free at this point. The Cart Transform runs
+  // BEFORE this function (transform -> discounts -> validation), so the
+  // price seen here is the post-transform price: the transform only clamps
+  // a marked line to $0 when the offer genuinely applies (active, buyer
+  // authenticated - see cart_transform_run.ts). A marked line that is NOT
+  // $0 is therefore a line the transform deliberately refused to make
+  // free - e.g. it is left over in the cart after the customer logged out.
+  //
+  // That distinction is essential, not cosmetic: an error emitted here
+  // blocks EVERY cart mutation while the condition holds, including the
+  // /cart/change.js the storefront script fires to REMOVE that very line.
+  // Gating on "actually free" means a leftover, full-price marked line is
+  // treated as an ordinary purchase, no error is emitted, and the script's
+  // automatic cleanup is free to remove it. Confirmed live: without this
+  // gate the cleanup 422s forever and the line can only be removed by hand.
+  //
+  // NOTE: this assumes the gift variant's catalog price is NOT $0 (see
+  // GWP-PLAN.md "Plus pivot" - the whole point of the transform is that we
+  // don't depend on that). If a merchant does set it to $0, a leftover
+  // marked line looks "free" here and the deadlock returns.
+  const isFree = (line: (typeof input.cart.lines)[number]) =>
+    parseFloat(line.cost.amountPerQuantity.amount) === 0;
+
   const giftQuantity = input.cart.lines
     .filter(
       (line) =>
         line.merchandise.__typename === "ProductVariant" &&
         line.merchandise.id === configuration.gift_variant_id &&
-        line.giftMarker?.value === "true",
+        line.giftMarker?.value === "true" &&
+        isFree(line),
     )
     .reduce((total, line) => total + line.quantity, 0);
 

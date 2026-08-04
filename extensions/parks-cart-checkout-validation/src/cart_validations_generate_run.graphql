@@ -16,6 +16,11 @@ query CartValidationsGenerateRunInput {
     }
     lines {
       quantity
+      cost {
+        amountPerQuantity {
+          amount
+        }
+      }
       merchandise {
         __typename
         ... on ProductVariant {

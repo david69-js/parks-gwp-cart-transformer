@@ -162,25 +162,17 @@
   // handled by the Cart Transform now) - it can happen with a single,
   // perfectly normal gift line, so it stays here regardless.
   //
-  // Confirmed live: this same 422 also fires for OUR OWN removal attempt
-  // (/cart/change.js on the gift line itself, quantity -> 0) whenever the
-  // buyer stops qualifying (e.g. logs out). The validation function
-  // evaluates the line's quantity as it was BEFORE this specific change is
-  // applied, so a single-line quantity-0 request on the gift line still
-  // sees giftQuantity > 0 and gets blocked by the same rule meant to keep
-  // it out of the cart - the removal can never land as a lone
-  // /cart/change.js call. It must go through the same atomic combined
-  // /cart/update.js retry as the subtotal case, which evaluates the final
-  // requested state (quantity 0) instead of the pre-mutation one.
-  var GIFT_BLOCKED_MESSAGES = ['qualify for the free gift', 'log in to your account to receive the free gift'];
-
+  // Deliberately matches ONLY the subtotal-threshold message. A blocked
+  // request whose fix is just "drop the gift line" must NOT come through
+  // here: the compensating update below would rebuild the exact same
+  // request that was just rejected, whose rejection would trigger another
+  // retry, forever. The validation function is instead responsible for not
+  // blocking removals in the first place (it ignores marked lines that
+  // aren't actually free - see cart_validations_generate_run.ts).
   function isGiftThresholdError(status, body) {
     if (status !== 422) return false;
     var message = body && (body.message || body.description);
-    if (typeof message !== 'string') return false;
-    return GIFT_BLOCKED_MESSAGES.some(function (fragment) {
-      return message.indexOf(fragment) !== -1;
-    });
+    return typeof message === 'string' && message.indexOf('qualify for the free gift') !== -1;
   }
 
   // Confirmed live: Liquid Ajax Cart sends a JSON string body when we call
@@ -224,6 +216,15 @@
       if (!targetKey) return;
 
       var giftLines = cart.items.filter(isMarkedGiftLine);
+
+      // Nothing to combine: the blocked request was itself only touching a
+      // gift line, so the "compensating" update would be byte-for-byte the
+      // request that just got rejected - retrying it only loops.
+      if (giftLines.some(function (line) { return line.key === targetKey; })) {
+        console.log('[GWP] blocked request only touched a gift line, not retrying (would be identical)');
+        return;
+      }
+
       var updates = {};
       giftLines.forEach(function (line) {
         updates[line.key] = 0;
