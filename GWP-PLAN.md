@@ -24,7 +24,10 @@ Metafield compartido por todas: shop metafield `$app:gwp.config` (json):
 `test_tag[]`.
 
 Access scopes (`shopify.app.toml`): `read_products, write_products,
-read_customers, write_cart_transforms`.
+read_customers, write_cart_transforms, write_validations` (este último no
+sirve para activar la validation function desde la extensión — ver punto 6 —
+pero queda declarado igual porque `write_validations` sigue siendo necesario
+para que la mutación funcione desde cualquier contexto con acceso offline).
 
 ## Decisiones tomadas explícitamente con el usuario (no asumidas)
 
@@ -252,6 +255,69 @@ query {
 }
 ```
 
+### 7. BUG REAL encontrado en vivo: el App Embed del theme estaba OFF
+
+Después de activar la validation function (punto 6), el JS del theme
+(`gwp-add-to-cart.js`) seguía sin correr en el storefront real: sin logs
+`[GWP]` en consola, sin request de red al archivo. La liquid del bloque
+(`shop.metafields['$app:gwp']['config']`) estaba bien.
+
+Causa raíz: el toggle "Gift With Purchase" en Theme Editor → App embeds
+estaba apagado para el theme que realmente sirve el storefront de prueba
+("parks-project", Draft, no el auto-generado "App Ext. Host" que usa el
+preview aislado de `127.0.0.1:9293`). Los App Embeds no se activan solos con
+`shopify app dev`; hay que prenderlos a mano por theme, y el toggle parece
+resetearse a OFF cuando la app se desinstala/reinstala.
+
+**Fix:** prender el toggle manualmente en el Theme Editor del theme correcto
+y guardar. Confirmado después: `window.fetch` queda parchado (ya no es
+nativo) y `#gwp-config` aparece en el HTML con los valores correctos.
+
+### 8. Carrito de prueba atascado con 2 regalos, ningún mutation lo arregla — diagnóstico
+
+El usuario reportó (una vez la validation ya estaba activa y el App Embed ya
+prendido) un carrito con la línea de regalo en cantidad 2, bloqueado en
+checkout como se espera ("Only one free gift is allowed per order.") — pero
+**ningún** intento de arreglarlo desde el storefront funcionaba: ni bajar esa
+línea a 1, ni a 0, ni cambiar la cantidad de otra línea sin relación, ni
+`/cart/clear.js`, ni el link `/cart/clear`. Todos devolvían el mismo 422,
+incluso mutaciones que deberían haber dejado el carrito en un estado válido.
+
+**Verificación en un carrito 100% nuevo** (cookie de cart limpiada a mano,
+nunca visitó `/checkout`): se intentó reproducir el mismo estado inválido
+por todas las vías posibles —`/cart/add.js` con cantidad 2 en una sola
+llamada, dos llamadas `/cart/add.js` concurrentes (`Promise.all`), y
+`/cart/change.js` subiendo una línea existente de 1 a 2— y en los tres casos
+Shopify bloqueó la mutación **antes** de que se aplicara (la línea nunca
+llegó a existir en cantidad 2; el carrito se mantuvo íntegro y válido en
+todo momento). No fue posible reproducir el estado atascado desde cero.
+
+**Conclusión:** el carrito atascado del usuario casi con certeza entró en
+ese estado inválido **antes** de que la validation function estuviera
+realmente activa (recordar el punto 6: `validationCreate` nunca se ejecutó
+hasta la activación manual vía GraphiQL, a mitad de esta sesión de testing).
+Una vez activada, la validation empezó a evaluar un carrito que ya traía la
+violación desde antes, y como el checkout de Shopify aparenta bloquear
+**toda** mutación sobre un carrito con una validación activa fallando (no
+solo la que la causó), no hay mutation posible que lo saque de ese estado
+retroactivamente por el storefront. No se identificó ninguna vía de
+recuperación distinta a abandonar ese carrito (cookies nuevas / ventana
+nueva) — para un carrito real de un cliente esto no debería volver a pasar,
+porque de ahora en más la validation está activa desde el primer mutation.
+
+**Bug real encontrado de paso (sí corregido):** `gwp-add-to-cart.js` tenía
+una función `isAnyGiftVariantLine` que identificaba "la línea del regalo"
+por `variant_id` solamente, sin chequear la marca `_gwp_gift` — quedó así
+desde antes del "marker pivot" (punto 4) y nunca se actualizó para
+reflejarlo. Consecuencia: si un cliente tenía a la vez la línea de regalo
+marcada Y una segunda unidad del mismo variant comprada genuinamente a
+precio normal (el escenario que el punto 4 existe para soportar), y la
+oferta dejaba de aplicar (ej. el subtotal bajaba, o cambiaba de mercado), la
+limpieza automática (`removeLines`) borraba **las dos** líneas — incluida la
+que el cliente pagó. Renombrada a `isMarkedGiftLine`, ahora exige también
+`item.properties['_gwp_gift'] === 'true'`, consistente con el transform y la
+validation function.
+
 ## Qué cambia respecto a `free-gift-gwp-validation`
 
 - **Admin action**: código reutilizado casi verbatim + se agrega
@@ -267,13 +333,11 @@ query {
   Plus" arriba) — la tienda destino confirmó ser Plus, así que sí se usa
   `lineUpdate`/`linesMerge` con `price` para forzar el $0 server-side, evitando
   depender de que el catálogo tenga el variant en $0.
-- **Cart & Checkout Validation Function**: lógica de negocio sin cambios
-  (sigue sumando la cantidad de TODAS las líneas que matcheen el
-  `gift_variant_id`, marcadas o no — esto YA es equivalente a "revisar la
-  cantidad de la única línea fusionada" cuando el merge funciona, y sigue
-  siendo la defensa correcta si el merge experimental fallara). Se documenta
-  esta razón en un comentario para que quede explícito que es una decisión, no
-  un olvido.
+- **Cart & Checkout Validation Function**: suma la cantidad SOLO de las
+  líneas marcadas con `_gwp_gift: true` (ver punto 4, "Marker pivot") — no
+  todas las líneas que matcheen `gift_variant_id`. Sigue siendo la defensa
+  correcta si el merge experimental fallara (2 líneas marcadas sin fusionar
+  igual suman su cantidad total).
 
 ## Estado de implementación
 

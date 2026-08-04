@@ -39,20 +39,20 @@
     return typeof window.liquidAjaxCart !== 'undefined' && window.liquidAjaxCart !== null;
   }
 
-  // Any line for the gift variant is "the gift", full stop - marked by us,
-  // added by the customer, or added by some other app. Other apps have no
-  // idea this variant is special or that we tag it with a property, so
-  // matching on the marker property would miss lines they create. We own
-  // this variant entirely (it's a dedicated, hidden-from-browsing gift
-  // product), so it's safe to manage any line that matches it.
+  // Only lines WE marked are "the gift" - a customer can add the same
+  // variant a second time as a genuine, normal-priced purchase (the Cart
+  // Transform and Validation functions already treat unmarked lines that
+  // way, see GWP-PLAN.md "marker pivot"). If we matched on variant id alone,
+  // a market/subtotal change that makes the offer stop applying would wipe
+  // out that paid line too, not just the free one.
   //
   // Duplicate-line consolidation ("keep 1, delete the rest") used to live
   // here in JS. That's now handled server-side by the parks-cart-transformer
   // Cart Transform Function (`linesMerge`), which folds any duplicate gift
   // lines into one before the cart is ever displayed - see GWP-PLAN.md for
   // why that's currently marked experimental/unverified in production.
-  function isAnyGiftVariantLine(item) {
-    return item.variant_id === giftVariantId;
+  function isMarkedGiftLine(item) {
+    return item.variant_id === giftVariantId && item.properties && item.properties[GIFT_MARKER_KEY] === 'true';
   }
 
   // Re-checked on every sync (not just once at page load) so a customer
@@ -193,7 +193,7 @@
       var targetKey = originalBody.id != null ? originalBody.id : (cart.items[originalBody.line - 1] || {}).key;
       if (!targetKey) return;
 
-      var giftLines = cart.items.filter(isAnyGiftVariantLine);
+      var giftLines = cart.items.filter(isMarkedGiftLine);
       var updates = {};
       giftLines.forEach(function (line) {
         updates[line.key] = 0;
@@ -262,7 +262,7 @@
 
     Promise.resolve(cartOverride || getCart())
       .then(function (cart) {
-        var giftLines = cart.items.filter(isAnyGiftVariantLine);
+        var giftLines = cart.items.filter(isMarkedGiftLine);
         var applies = offerApplies();
 
         if (!applies) {
