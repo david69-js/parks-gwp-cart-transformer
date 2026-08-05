@@ -631,7 +631,7 @@ recovery - the compensating combined update - lives entirely in the
 storefront JS. If that JS is not loaded (app embed off, ad blocker, script
 error, theme pushed without the embed), the customer is simply stuck. This
 is the most user-visible failure and the one worth designing away; see
-"Known structural weakness" below.
+"Known structural weakness - CLOSED" below.
 
 **4. Pushing this repo's theme silently disables GWP.** App embed enablement
 lives in `config/settings_data.json` under `current.blocks`. If the local
