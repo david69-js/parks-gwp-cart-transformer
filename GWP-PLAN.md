@@ -877,12 +877,34 @@ CATALOG price, where the line looks free no matter what the transform does.
 Anywhere the transform owns the $0, the transform is the layer that enforces
 login, not the validation.
 
-Open UX bug found in case 11: the line keeps its `Gift: Free Gift With
-Purchase` display property even when it is being charged for, so checkout
-shows "Gift: Free Gift With Purchase" directly above a $4.00 line price. The
-window is short (the poll clears the line within 10s) but it lands in
-checkout, which is the worst place for it. The `Gift` property should be
-dropped, or the label suppressed, whenever the line is not actually free.
+Known cosmetic issue found in case 11, **accepted by the user**: the line keeps
+its `Gift: Free Gift With Purchase` display property even when it is being
+charged for, so checkout can show "Gift: Free Gift With Purchase" directly
+above a $4.00 line price. The window is short - the poll clears the line within
+10s - but it lands in checkout.
+
+It was fixed (property dropped, label rendered by the theme from
+`final_price == 0`) and then **reverted at the user's request**: they want the
+"Free Gift With Purchase" message visible in cart AND checkout, and the theme
+cannot put text into checkout - only a real line property can. Keeping the
+property is the only way to have that message at checkout, and the stale-label
+window is the accepted cost. Do not "fix" this again without asking.
+
+For the record, what was investigated and ruled out as an alternative:
+
+- **The cart transform cannot emit a message.** `UpdateOperation` accepts only
+  `cartLineId`, `image`, `price`, `title` - there is no message/note/attributes
+  field anywhere in the transform's operations. `MergeOperation` does take
+  `attributes`, but that only ever runs in the duplicate-lines case.
+- **`lineUpdate.title` is the only text a transform can write**, and it
+  *replaces* the product title rather than adding a line under it - so it
+  propagates into checkout, the order, packing slips and confirmation emails.
+- **A discount function is what would do this properly**: it creates a discount
+  allocation carrying its own title, which Shopify renders as its own line and
+  which disappears by itself when it stops applying. That is the standard GWP
+  presentation and it is self-correcting by construction. Adopting it means the
+  discount, not the transform, becomes what makes the line $0 - an architecture
+  change, with the transform kept only for `linesMerge`. Not done.
 
 Not covered, and why:
 
