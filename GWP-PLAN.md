@@ -531,3 +531,116 @@ See the session's TaskList. Extensions already scaffolded by the CLI with
 the correct handles (`parks-admin-action-ui`, `parks-theme-extension`,
 `parks-cart-transformer`, `parks-cart-checkout-validation`) — placeholder
 content still needed replacing with the real logic described above.
+
+## Operator's guide: modes, shutdown, and failure modes
+
+Which layer enforces what (verified by reading each source, not assumed):
+
+| Rule | Theme JS | Cart Transform | Validation |
+|---|---|---|---|
+| `status: "draft"` | yes | yes | yes |
+| Customer logged in | yes | yes | yes |
+| US / USD only | yes | **NO** | yes |
+| Minimum subtotal | yes | **NO** | yes |
+| `test_mode` + tag | yes | **NO** | **NO** |
+| Only one gift | no | merges duplicates | yes |
+
+Two of those gaps matter operationally and are described below.
+
+### Use case 1: `status` active vs draft
+
+`status` is the real master switch: it is the only setting all three layers
+respect. See point 9 for the per-layer detail.
+
+- **active** - offer runs normally, subject to the other conditions.
+- **draft** - every layer turns itself off. The theme JS removes any marked
+  line it finds, the transform stops clamping to $0, and the validation
+  stops blocking. The gift variant behaves as a 100% ordinary product.
+
+**To shut GWP down completely, set `status: "draft"`.** Nothing else is
+required, and nothing else is sufficient.
+
+### Use case 2: test mode
+
+`test_mode` + `test_tag` restrict the offer to logged-in customers carrying
+the configured tag, so the offer can be rehearsed on a live store without
+exposing it to real shoppers.
+
+**Important: test mode is enforced in the storefront JS only** (0 references
+in either function - grep to confirm). It controls *who is offered the
+gift*; it is not a security boundary. If a marked gift line reaches the cart
+of a customer without the tag, the transform still prices it at $0 and the
+validation still treats it as a real gift. In practice the JS is the only
+thing that adds the line, so this is a small hole - but do not treat test
+mode as "the offer cannot possibly apply to anyone else".
+
+Test mode also stacks on top of the login requirement (point 10): an
+anonymous visitor never qualifies, tag or not.
+
+### Use case 3: turning things off - what NOT to use
+
+**The App embed toggle is not a kill switch.** Turning it off stops the JS
+from loading, which stops new gifts being added - but the transform and the
+validation keep running server-side. A cart that already holds a marked line
+keeps getting it at $0 *and* keeps hitting validation errors that now have
+nothing to recover them (see below). Use `status: "draft"` instead, and leave
+the embed alone.
+
+### Possible errors and how to diagnose them
+
+**1. The offer does nothing at all; no `#gwp-config` in the page source.**
+Almost always the browser is on a different theme, not a broken config.
+Check `Shopify.theme.id` / `.name` in the console against the active theme.
+See the debugging gotcha in point 10 for the full recovery.
+
+**2. The storefront is running old code after a deploy.** A `shopify app dev`
+session pins a dev bundle that overrides the released version, and it
+survives killing the process. Confirm by looking for `/dev-` in the
+`gwp-add-to-cart.js` URL; recover with "Clean dev preview" in the Dev
+Console. Almost every confusing result during development traces back to
+this.
+
+**3. Customer cannot lower a quantity ("must be at least $X" error, and
+nothing happens).** The validation rejects the cart mutation, and the
+recovery - the compensating combined update - lives entirely in the
+storefront JS. If that JS is not loaded (app embed off, ad blocker, script
+error, theme pushed without the embed), the customer is simply stuck. This
+is the most user-visible failure and the one worth designing away; see
+"Known structural weakness" below.
+
+**4. Pushing this repo's theme silently disables GWP.** App embed enablement
+lives in `config/settings_data.json` under `current.blocks`. If the local
+copy of that file predates the embed being enabled, pushing the theme
+removes the block from the live theme and the whole feature stops - with no
+error anywhere. Check that `settings_data.json` contains a
+`shopify://apps/parks-gwp-cart-transformer/blocks/gwp-add-to-cart/...` entry
+with `"disabled": false` before deploying a theme.
+
+**5. Gift stays free outside the US.** The transform never checks country -
+only the JS and the validation do. A marked line on a non-US cart is still
+clamped to $0 by the transform, and the validation deliberately allows
+non-US checkouts through, so nothing stops it. Reaching that state requires
+the JS to have failed to clean up after a market switch, but it is a real
+hole. `localization` IS available in the transform's input (it simply isn't
+queried), so this is fixable, not a platform limit.
+
+### Known structural weakness (not yet addressed)
+
+Errors 3 and 5 share a root cause: **the server can create states that only
+the client can get out of.** The validation blocks a cart mutation, and the
+only thing that resolves it is storefront JS.
+
+Two fixes are available and neither is speculative:
+
+- The validation's input exposes `buyerJourney`, which distinguishes cart
+  interaction from checkout. Restricting the blocking rules to the checkout
+  step would stop them from ever rejecting a legitimate cart edit, removing
+  the entire deadlock class.
+- The transform can read `cost.amountPerQuantity` per line and `localization`,
+  so it could decide "qualifies" itself and simply not make the line free.
+  Combined with the validation's existing "only enforce on lines that are
+  actually free" gate (point 10), a non-qualifying cart would produce no
+  error at all - so nothing would need recovering, with or without JS.
+
+Until one of these lands, treat the storefront JS as load-bearing: if it
+does not run, carts holding a gift line can get stuck.
