@@ -504,6 +504,31 @@ in/out without a full page reload. A stale/un-refreshed page can show
 tested after any login/logout before checking `#gwp-config` or reporting a
 mismatch.
 
+### 11. The progress bar's threshold stays a theme setting, duplicated on purpose
+
+The theme's drawer progress bar reads `settings.free_gift_threshold`, while
+what actually grants the gift is the app's `min_subtotal` (in the shop
+metafield). Two numbers, same meaning, kept in sync by hand.
+
+The obvious de-duplication is to have the bar read `min_subtotal` out of the
+`#gwp-config` JSON the app embed already renders, or straight from the
+metafield in Liquid. **Proposed and rejected by the user.** They had already
+tried reading the metafield from the theme and hit the app-reserved namespace
+problem: `$app:gwp` is not the key you can look it up under. It resolves to
+`app--<app_id>--gwp` (here `app--405905539073--gwp`), which is unstable across
+environments and awkward to reference from theme code that has to keep working
+independently of the app.
+
+**Decision: leave the threshold in theme settings.** The duplication is
+accepted and deliberate - do not "fix" it. What was removed instead was
+`free_gift_variant_id`, which was a genuinely unnecessary second source of
+truth (gift lines are now found by the `_gwp_gift` property). The threshold is
+not: it is presentation, it must render even if the app embed is off, and a
+theme setting is the only place the theme can read it from reliably.
+
+The `settings_schema.json` help text states the sync requirement explicitly so
+a merchant changing one knows to change the other.
+
 ## What's different from `free-gift-gwp-validation`
 
 - **Admin action**: code reused almost verbatim + adds
@@ -779,4 +804,6 @@ enable + threshold, both presentation-only, and gift lines are detected by the
 `_gwp_gift` property the app sets. The threshold is still duplicated between
 `settings.free_gift_threshold` (what the bar promises) and the app's
 `min_subtotal` (what is actually granted) - the schema now says so explicitly,
-but they must still be kept in sync by hand.
+and they must be kept in sync by hand. That duplication is deliberate and was
+decided with the user; see decision 11 for why the metafield is not read
+instead.
