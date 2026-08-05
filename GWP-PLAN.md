@@ -649,26 +649,43 @@ the JS to have failed to clean up after a market switch, but it is a real
 hole. `localization` IS available in the transform's input (it simply isn't
 queried), so this is fixable, not a platform limit.
 
-### Known structural weakness (not yet addressed)
+### Known structural weakness - CLOSED
 
-Errors 3 and 5 share a root cause: **the server can create states that only
-the client can get out of.** The validation blocks a cart mutation, and the
-only thing that resolves it is storefront JS.
+Errors 3 and 5 shared a root cause: **the server could create states that only
+the client could get out of.** The validation rejected a cart mutation, and the
+only thing that resolved it was storefront JS.
 
-Two fixes are available and neither is speculative:
+**Fixed:** the validation now returns no operations when
+`buyerJourney.step === CART_INTERACTION`. Enforcement happens only at the
+checkout steps, which is still unbypassable (checkout is the only way to turn
+a cart into an order), but no cart edit is ever refused. Removing the gift,
+lowering a quantity and emptying the cart always succeed now, with or without
+the storefront script running.
 
-- The validation's input exposes `buyerJourney`, which distinguishes cart
-  interaction from checkout. Restricting the blocking rules to the checkout
-  step would stop them from ever rejecting a legitimate cart edit, removing
-  the entire deadlock class.
-- The transform can read `cost.amountPerQuantity` per line and `localization`,
-  so it could decide "qualifies" itself and simply not make the line free.
-  Combined with the validation's existing "only enforce on lines that are
-  actually free" gate (point 10), a non-qualifying cart would produce no
-  error at all - so nothing would need recovering, with or without JS.
+What forced the change: the "only enforce on lines that are actually free"
+gate (point 10) was the sole escape from the deadlock, and it depends on the
+transform *refusing* to clamp so the line reverts to its catalog price. On a
+store where the gift product's **catalog price is already $0**, that can never
+happen - the line looks free no matter what, the validation keeps enforcing,
+and every mutation including the cleanup is rejected forever. The caveat was
+written into `cart_validations_generate_run.ts` when the gate was added; the
+`feat/gwp-remove-free-prod` setup then hit it in practice.
 
-Until one of these lands, treat the storefront JS as load-bearing: if it
-does not run, carts holding a gift line can get stuck.
+The earlier recoveries are kept but are no longer load-bearing: the
+storefront's combined-update retry (which only ever worked for fetch-based
+requests that touched a non-gift line) and the "actually free" gate itself.
+
+The second candidate fix - having the transform decide "qualifies" from
+`cost.amountPerQuantity` + `localization` and simply not clamp - was NOT
+implemented. It is still worth doing for a different reason: the transform
+currently never checks country (see the enforcement matrix above).
+
+Still unverified: the transform issues `lineUpdate` against the gift variant
+even after the merchant deactivates that product. This file's own header warns
+that a rejected `lineUpdate` produces a hard cart calculation error blocking
+the entire cart, and the `buyerJourney` change does nothing about that path.
+If a cart still locks up after deactivating the gift product, look there
+first.
 
 ## Theme interference audit (Parks-Project-Theme)
 
@@ -734,7 +751,8 @@ which on `templates/cart.liquid` sits inside the hidden empty-cart block - so
 the customer does not even see an error.
 
 This is the same deadlock class as failure mode 3 in the operator's guide, and
-it is closed for good by either fix listed under "Known structural weakness".
+it is closed by the `buyerJourney` gate described under "Known structural
+weakness - CLOSED".
 Until then the drawer cart is the only cart UI that recovers cleanly.
 
 ### 3. `Neptune.cart.changeItem` targets lines by variant id with empty properties

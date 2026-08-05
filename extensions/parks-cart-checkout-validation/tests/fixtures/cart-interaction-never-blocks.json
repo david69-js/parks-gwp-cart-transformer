@@ -4,21 +4,19 @@
     "target": "cart.validations.generate.run",
     "input": {
       "buyerJourney": {
-        "step": "CHECKOUT_COMPLETION"
+        "step": "CART_INTERACTION"
       },
       "cart": {
-        "buyerIdentity": {
-          "isAuthenticated": true
-        },
+        "buyerIdentity": null,
         "cost": {
           "subtotalAmount": {
-            "amount": "150.00",
+            "amount": "40.00",
             "currencyCode": "USD"
           }
         },
         "lines": [
           {
-            "quantity": 1,
+            "quantity": 2,
             "cost": {
               "amountPerQuantity": {
                 "amount": "0.0"
@@ -49,13 +47,7 @@
       }
     },
     "output": {
-      "operations": [
-        {
-          "validationAdd": {
-            "errors": []
-          }
-        }
-      ]
+      "operations": []
     }
   }
 }

@@ -1,4 +1,7 @@
 query CartValidationsGenerateRunInput {
+  buyerJourney {
+    step
+  }
   localization {
     country {
       isoCode

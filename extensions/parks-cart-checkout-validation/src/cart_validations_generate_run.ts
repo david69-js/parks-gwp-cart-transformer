@@ -1,3 +1,4 @@
+import { BuyerJourneyStep } from "../generated/api";
 import type {
   CartValidationsGenerateRunInput,
   CartValidationsGenerateRunResult,
@@ -29,6 +30,37 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
 
   if (!configuration?.gift_variant_id) {
     console.log("[GWP validation] no config set, allowing checkout");
+    return { operations: [] };
+  }
+
+  // Never emit an error while the customer is editing their cart.
+  //
+  // A validation error does not just warn - it REJECTS the mutation that
+  // triggered it. Enforcing during CART_INTERACTION therefore blocks the very
+  // requests that would fix the cart: removing the gift line, lowering a
+  // quantity, emptying the cart. The customer ends up in a state only we can
+  // get them out of, and if the storefront script is not running (app embed
+  // off, JS error, a theme that never loads it) nothing gets them out at all.
+  //
+  // Every previous fix for this attacked one entry point at a time: the
+  // storefront retry that rebuilds a blocked change as a combined update, and
+  // the "only enforce on lines that are actually free" gate below. Both are
+  // still useful, but both are recoveries from a rejection that should never
+  // have happened, and both have holes:
+  //
+  //   - the retry only helps when the request came through fetch (the cart
+  //     page's native form POST never reaches it) and only when the blocked
+  //     request touched a non-gift line;
+  //   - the "actually free" gate depends on the transform refusing to clamp,
+  //     which cannot happen when the gift product's CATALOG price is already
+  //     $0 - there the line looks free no matter what and the cart deadlocks
+  //     permanently (this is the case that prompted this change).
+  //
+  // Restricting enforcement to the checkout steps closes the whole class
+  // instead: the rules still cannot be bypassed (checkout is the only way to
+  // turn a cart into an order), but no cart edit is ever refused.
+  if (input.buyerJourney.step === BuyerJourneyStep.CartInteraction) {
+    console.log("[GWP validation] cart interaction, not enforcing (checkout is where this is enforced)");
     return { operations: [] };
   }
 
