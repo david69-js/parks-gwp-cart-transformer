@@ -644,3 +644,139 @@ Two fixes are available and neither is speculative:
 
 Until one of these lands, treat the storefront JS as load-bearing: if it
 does not run, carts holding a gift line can get stuck.
+
+## Theme interference audit (Parks-Project-Theme)
+
+Audit of every path in `Parks-Project-Theme` that mutates the cart, checked
+against `extensions/parks-theme-extension/assets/gwp-add-to-cart.js` for
+deadlocks and lost updates. Findings are ordered by severity.
+
+### Clean
+
+- **Nothing else patches `window.fetch` or `XMLHttpRequest`.** Our interceptor
+  in `installGiftThresholdRetry()` is the only wrapper in the page, and no
+  theme file caches a `window.fetch` reference before we install ours - every
+  caller resolves `window.fetch` at call time, so they all go through it.
+  (`assets/fetch-polyfill.js` exists but is not referenced by any layout.)
+- **The theme no longer adds or removes the gift.** `handleCartChange()` in
+  `assets/layout.theme.js` is read-only; the old auto-add was removed
+  earlier. There is exactly one writer for the gift line.
+- **The drawer cart's quantity and remove controls are safe.** They use
+  `data-ajax-cart-request-button` -> `/cart/change?...`, which our interceptor
+  matches (`url.indexOf('/cart/change')`) and which `parseRequestUrl()` reads
+  out of the query string, so a blocked decrease is retried as a combined
+  update. The drawer is a `data-ajax-cart-section`, so the retry re-renders it.
+
+### 1. Every add-to-cart bypasses the Liquid Ajax Cart queue
+
+`assets/pdp-featured.js`, `pdp-baseline.js`, `pdp-featured-bundle.js`,
+`pdp-featured-vintage.js`, `pdp-featured-phone.js`, `featured-gift-card.js`,
+`related-swaches.js` and `hoox-shop.js` all do a bare
+`fetch('/cart/add.js', ...)` and only afterwards call `liquidAjaxCart.update()`.
+
+`gwp-add-to-cart.js` deliberately routes its own mutations through
+`liquidAjaxCart.add()/.change()` so it shares the library's queue and can never
+run concurrently with the theme. That guarantee does not hold against a bare
+fetch: the two requests genuinely can overlap. The window is small (the add
+resolves, then `update()` fires `request-end`, which is when we normally sync),
+but the 10s poll can land inside it. Our `syncing` flag only guards our own
+re-entrancy, not the theme's.
+
+Concrete failure: poll fires while an add is in flight -> `getCart()` returns
+Liquid Ajax Cart's *cached* pre-add cart -> subtotal still below threshold ->
+we remove the gift line that the customer just qualified for. Self-heals on the
+next `request-end`, so it shows up as a flicker rather than a permanent state.
+
+Fix (theme side): replace the bare fetches with `liquidAjaxCart.add(...)`.
+
+### 2. The cart page will not re-render after a compensating update
+
+`templates/cart.liquid` is a Neptune client-side template
+(`neptune-template="{topic:cart, source:cart}"`) with no
+`data-ajax-cart-section` anywhere. Its +/- and remove controls call
+`Neptune.cart.changeItem`, which is a bare `fetch('/cart/change.js')` with a
+JSON body - our interceptor *does* see it and *does* fire
+`retryBlockedChangeAsCombinedUpdate()`.
+
+But the recovery lands through `liquidAjaxCart.update({updates})`, and Liquid
+Ajax Cart only re-renders `[data-ajax-cart-section]` containers. On the cart
+page there are none, so the cart is corrected server-side while the page keeps
+showing the old quantity and the gift still listed. It looks like the click did
+nothing until the customer reloads.
+
+Worse, Neptune's own 422 branch writes the error into `[neptune-message="cart"]`,
+which on `templates/cart.liquid` sits inside the hidden empty-cart block - so
+the customer does not even see an error.
+
+This is the same deadlock class as failure mode 3 in the operator's guide, and
+it is closed for good by either fix listed under "Known structural weakness".
+Until then the drawer cart is the only cart UI that recovers cleanly.
+
+### 3. `Neptune.cart.changeItem` targets lines by variant id with empty properties
+
+Its body is `{id: variantID, quantity, properties: {}}`. When a cart holds the
+gift variant twice - once as our marked $0 line and once as a genuine
+full-price purchase (a case the transform and validation explicitly support) -
+which line Shopify resolves is not something the theme controls. A customer
+removing their paid line can take out the gift line instead, or the reverse.
+
+Only reachable from `templates/cart.liquid`, and only for that variant.
+
+### 4. `templates/cart.contents.liquid` submits a native form
+
+`<form action="/cart" method="post">` with positional `updates[]`. This is a
+full page POST, not fetch: our interceptor cannot see it, so a validation
+rejection surfaces as Shopify's raw error page with no recovery at all. This
+template appears unused (the active cart template is `cart.liquid`), so it is
+latent rather than live - but it must not be switched on as-is.
+
+### 5. Progress bar and gift eligibility disagree about SavedBy
+
+`updateProgressBar()` computes `cartTotal` as `cart.total_price` **minus** all
+`vendor === "SavedBy"` lines (shipping protection). Both `gwp-add-to-cart.js`
+(`cart.items_subtotal_price`) and the validation function
+(`cart.cost.subtotalAmount`) **include** it.
+
+So with shipping protection in the cart the bar can still say "Add $12.00 to
+unlock Special Gift!" while the app has already granted the gift, or the
+reverse. Not a deadlock - purely a wrong number shown to the customer. Deciding
+which definition is correct is a merchandising call, so it is left as-is and
+flagged here.
+
+Related: the JS uses `items_subtotal_price` (before cart-level discounts) while
+the validation uses `cost.subtotalAmount`. With an order-level discount code
+these can differ too.
+
+### 6. `liquid-ajax-cart:request-end` is a crowded, partly circular channel
+
+Four listeners fire on every cart request:
+
+| Source | Effect |
+| --- | --- |
+| `assets/layout.theme.js:32` | `updateProgressBar()` |
+| `assets/layout.theme.js:620` | `updateTheCartSelections()` + donation block |
+| `snippets/defer-scripts.liquid:291` | dispatches `ShopifyCartChanged` |
+| `snippets/drawer-cart-header.liquid:181` | refocuses the edited quantity input |
+| `gwp-add-to-cart.js` | `syncGiftLine()` - **the only one that can mutate** |
+
+`defer-scripts.liquid` also listens for `PledgeDonationChanged` and answers it
+with `liquidAjaxCart.update()`. If the Pledge widget ever emits
+`PledgeDonationChanged` in response to `ShopifyCartChanged`, that closes a loop
+that runs entirely inside the theme - and our sync sits in it, adding a cart
+mutation to each turn. This is theme-side and pre-existing; the
+`CLEANUP_RETRY_COOLDOWN_MS` guard in `gwp-add-to-cart.js` caps our contribution
+but does not break the loop.
+
+`checkIfGiftProductExists()` used to add a `/cart.js` request to every one of
+these turns; it now reads Liquid Ajax Cart's cached cart instead.
+
+### Theme is progress-bar-only
+
+The theme's `free_gift_variant_id` setting was a second source of truth for
+which product is the gift, and nothing consumed it except the progress bar's
+own line detection. It has been removed: the theme's Free Gift panel is now
+enable + threshold, both presentation-only, and gift lines are detected by the
+`_gwp_gift` property the app sets. The threshold is still duplicated between
+`settings.free_gift_threshold` (what the bar promises) and the app's
+`min_subtotal` (what is actually granted) - the schema now says so explicitly,
+but they must still be kept in sync by hand.
