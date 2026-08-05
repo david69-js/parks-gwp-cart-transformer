@@ -92,10 +92,25 @@
     return true;
   }
 
+  // Always ask the server. This used to return Liquid Ajax Cart's cached
+  // cart when it had one, which quietly broke the 10s poll - the one thing
+  // that is supposed to be the last-resort safety net.
+  //
+  // Liquid Ajax Cart only updates that cache for requests IT performed. Every
+  // add-to-cart in the Parks theme is a bare `fetch('/cart/add.js')` outside
+  // its queue (8 files - see GWP-PLAN.md, theme interference audit #1), and so
+  // is anything a third-party cart app does. The moment one of those lands,
+  // the cache is stale. The poll then re-read that same stale object every 10
+  // seconds forever and could never discover the line it was meant to clean
+  // up: confirmed live, a leftover $4.00 gift line survived indefinitely while
+  // the script logged "cleaning up" on every tick, and vanished the instant
+  // the cache was refreshed by hand.
+  //
+  // The event-driven path does NOT pay for this: watchLiquidAjaxCart passes
+  // `event.detail.cart` straight into syncGiftLine as cartOverride, so it
+  // never calls this at all. Only the poll and the initial sync fetch, which
+  // is exactly the request the poll already implied it was making.
   function getCart() {
-    if (hasLiquidAjaxCart() && window.liquidAjaxCart.cart) {
-      return Promise.resolve(window.liquidAjaxCart.cart);
-    }
     return fetch('/cart.js', {headers: {Accept: 'application/json'}}).then(function (res) {
       if (!res.ok) {
         throw new Error('Failed to load cart (' + res.status + ')');
