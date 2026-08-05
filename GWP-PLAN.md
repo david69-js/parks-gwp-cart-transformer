@@ -860,11 +860,32 @@ Dev Console's "Clean dev preview" button.
 | 7 | GWP `status: draft` | Propagated to `#gwp-config`. Gift not added even at $188. A forced marked line came in at **$4.00, not $0** - the transform correctly refused to clamp. |
 | 8 | Leftover line cleanup under `status: draft` | **FAILED on v13** - see audit finding #1. Fixed and re-verified on v14. |
 
+Logged-out cases, run separately once the store owner signed out (v14):
+
+| # | Case | Result |
+|---|---|---|
+| 9 | Logged out, cart at $188 (qualifies on every other rule) | No gift added. `offerApplies()` login gate holds. |
+| 10 | Logged out with a leftover marked line | Came in at **$4.00, not $0** - the transform's `isAuthenticated` guard refused to clamp - and the poll removed it on its own. No deadlock. This is the scenario that started this whole workstream. |
+| 11 | Logged out, reaching checkout with that line | **Allowed, and correctly so.** The line is not free, so it is an ordinary $4.00 purchase with nothing to enforce. Total $192.00, no error banner. |
+
+Case 11 has a consequence worth writing down: **the validation's "Please log in
+to your account to receive the free gift" error is unreachable on this store.**
+The transform refuses to clamp for an unauthenticated buyer, so the line is
+never $0, so the `isFree` gate excludes it and the login branch never runs. It
+is not dead code - it is the backstop for a shop whose gift variant has a $0
+CATALOG price, where the line looks free no matter what the transform does.
+Anywhere the transform owns the $0, the transform is the layer that enforces
+login, not the validation.
+
+Open UX bug found in case 11: the line keeps its `Gift: Free Gift With
+Purchase` display property even when it is being charged for, so checkout
+shows "Gift: Free Gift With Purchase" directly above a $4.00 line price. The
+window is short (the poll clears the line within 10s) but it lands in
+checkout, which is the worst place for it. The `Gift` property should be
+dropped, or the label suppressed, whenever the line is not actually free.
+
 Not covered, and why:
 
-- **Logged-out behaviour.** Testing it means logging the store owner out, and
-  logging back in needs their credentials. The login gate was verified live in
-  an earlier session across all three layers.
 - **Test mode.** Client-side only (confirmed by grep: zero references in either
   function). The signed-in test customer carries the `gwp-test` tag, so only
   the positive half was observable without editing customer tags.
