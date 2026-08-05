@@ -731,6 +731,20 @@ next `request-end`, so it shows up as a flicker rather than a permanent state.
 
 Fix (theme side): replace the bare fetches with `liquidAjaxCart.add(...)`.
 
+**CONFIRMED LIVE on v13, and worse than described above.** `getCart()` in
+`gwp-add-to-cart.js` preferred Liquid Ajax Cart's cached cart whenever it had
+one, and that cache only tracks requests the library made itself. So a bare
+`/cart/add.js` did not just risk a race - it left the cache permanently wrong,
+and the 10s poll (the last-resort safety net) re-read that same stale object
+forever. Observed: with GWP set to draft, a leftover marked line sat in the
+cart at $4.00 while the script logged "offer does not apply, cleaning up" on
+every tick and removed nothing; the cache showed 1 item, the server had 2. One
+manual `liquidAjaxCart.update()` and the line was gone within one tick.
+
+Fixed in v14: `getCart()` now always fetches `/cart.js`. The event path is
+unaffected - it passes `event.detail.cart` in as `cartOverride` and never calls
+`getCart()`. Re-verified live on v14: same setup, cleaned up on its own.
+
 ### 2. The cart page will not re-render after a compensating update
 
 `templates/cart.liquid` is a Neptune client-side template
@@ -825,3 +839,41 @@ enable + threshold, both presentation-only, and gift lines are detected by the
 and they must be kept in sync by hand. That duplication is deliberate and was
 decided with the user; see decision 11 for why the metafield is not read
 instead.
+
+## Live verification log (2026-08-05, v13/v14, testing-david-plus)
+
+Run against the **published** theme (`parks-project - plus`, role `main`) with
+the released app version, not a dev preview. Two `shopify` dev sessions were
+running and had the store pinned to a `dev-` extension bundle; `shopify app
+dev clean --store ...` restored the released version. Killing the processes
+alone did NOT unpin it - that command is the fix, and it is faster than the
+Dev Console's "Clean dev preview" button.
+
+| # | Case | Result |
+|---|---|---|
+| 1 | Logged in, US, $94 (below threshold) | No gift. Correct. |
+| 2 | Cross to $188 | Gift auto-added at $0 with `_gwp_gift: true`. |
+| 3 | Drop back to $94 | **2x `/cart/change.js` -> 200.** No 422, no compensating retry. Gift removed. This is the case the `buyerJourney` gate fixed. |
+| 4 | Orphaned $0 marked line in a $94 cart | Auto-removed by the poll. All requests 200. The deadlock is gone. |
+| 5 | Checkout with gift + $94 | **Blocked**, banner: "Your order must be at least $100.00 to qualify for the free gift." Enforcement intact. |
+| 6 | Gift product set to Draft in Shopify admin, gift in cart | Removing the gift: 200. Lowering quantity: 200. **No cart lock.** The feared hard cart-calculation error from `lineUpdate` against a deactivated variant did not occur. |
+| 7 | GWP `status: draft` | Propagated to `#gwp-config`. Gift not added even at $188. A forced marked line came in at **$4.00, not $0** - the transform correctly refused to clamp. |
+| 8 | Leftover line cleanup under `status: draft` | **FAILED on v13** - see audit finding #1. Fixed and re-verified on v14. |
+
+Not covered, and why:
+
+- **Logged-out behaviour.** Testing it means logging the store owner out, and
+  logging back in needs their credentials. The login gate was verified live in
+  an earlier session across all three layers.
+- **Test mode.** Client-side only (confirmed by grep: zero references in either
+  function). The signed-in test customer carries the `gwp-test` tag, so only
+  the positive half was observable without editing customer tags.
+
+Corrections to earlier claims in this document and in
+`snippets/gwp-gift-product-redirect.liquid`:
+
+- A product with Shopify **status Draft** was still added to the cart by
+  `/cart/add.js` (observed in case 6, `addStatus: 200`). The blanket claim that
+  deactivating the product breaks the app's own add is therefore too strong for
+  the Draft case. Removing the product from the **Online Store sales channel**
+  is a different setting and was not tested - the warning may still hold there.
