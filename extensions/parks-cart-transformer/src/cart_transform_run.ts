@@ -23,12 +23,8 @@ type Configuration = {
 // Attributes copied onto the merged line so it keeps showing as a gift in
 // the cart UI after consolidation, matching what the storefront script sets
 // via cart/add.js properties when it first adds the line.
-// Marker only, matching what the storefront script sets via cart/add.js. The
-// visible `Gift: "Free Gift With Purchase"` attribute was dropped: it survived
-// on lines this function later refuses to make free, so checkout showed a
-// "free gift" label next to a real charge. The theme renders that label
-// itself now, conditioned on the line actually being $0.
 const GIFT_MARKER_ATTRIBUTE = {key: "_gwp_gift", value: "true"};
+const GIFT_MESSAGE_ATTRIBUTE = {key: "Gift", value: "Free Gift With Purchase"};
 
 // EXPERIMENTAL / UNVERIFIED IN PRODUCTION: every published Shopify example of
 // `linesMerge` merges DIFFERENT component variants into a dedicated "bundle"
@@ -138,7 +134,7 @@ export function cartTransformRun(input: CartTransformRunInput): CartTransformRun
             quantity: line.quantity,
           })),
           price: {percentageDecrease: {value: "100.0"}},
-          attributes: [GIFT_MARKER_ATTRIBUTE],
+          attributes: [GIFT_MARKER_ATTRIBUTE, GIFT_MESSAGE_ATTRIBUTE],
         },
       },
     ],

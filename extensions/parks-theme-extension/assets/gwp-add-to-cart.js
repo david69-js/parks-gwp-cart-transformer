@@ -29,25 +29,9 @@
 
   var giftVariantId = Number(String(config.gift_variant_id).split('/').pop());
   var minSubtotal = Number(config.min_subtotal);
-  // Only the marker. There used to be a second, visible property
-  // `Gift: "Free Gift With Purchase"` purely to label the line, and it lied
-  // whenever the line stopped being free: the offer stops applying (customer
-  // logs out, market changes, status set to draft), the transform correctly
-  // refuses to clamp, and the line goes back to its catalog price - but the
-  // label stayed. Checkout then read "Gift: Free Gift With Purchase"
-  // immediately above a $4.00 line price. Confirmed live.
-  //
-  // Line properties cannot be fixed after the fact either: the Cart Transform's
-  // `lineUpdate` operation only accepts cartLineId/image/price/title, so no
-  // server-side layer can strip or correct this label once it is set.
-  //
-  // So it is not set. The label is now rendered by the theme, conditioned on
-  // the line actually being $0, and checkout needs no label at all - it
-  // already prints FREE in the price column for a $0 line.
-  //
-  // The marker keeps its leading underscore: Shopify treats `_`-prefixed line
-  // properties as hidden, so it never reaches checkout or order emails.
   var GIFT_MARKER_KEY = '_gwp_gift';
+  var GIFT_MESSAGE_KEY = 'Gift';
+  var GIFT_MESSAGE_VALUE = 'Free Gift With Purchase';
   var syncing = false;
   var syncQueued = false;
   // If a cleanup removal gets rejected by the validation function (or fails
@@ -142,6 +126,7 @@
   function addGift() {
     var properties = {};
     properties[GIFT_MARKER_KEY] = 'true';
+    properties[GIFT_MESSAGE_KEY] = GIFT_MESSAGE_VALUE;
     var items = [{id: giftVariantId, quantity: 1, properties: properties}];
 
     if (hasLiquidAjaxCart()) {

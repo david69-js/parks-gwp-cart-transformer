@@ -65,6 +65,10 @@
               {
                 "key": "_gwp_gift",
                 "value": "true"
+              },
+              {
+                "key": "Gift",
+                "value": "Free Gift With Purchase"
               }
             ]
           }
