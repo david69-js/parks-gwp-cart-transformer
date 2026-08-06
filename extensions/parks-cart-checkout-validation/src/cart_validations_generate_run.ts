@@ -126,14 +126,16 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
   const isFree = (line: (typeof input.cart.lines)[number]) =>
     parseFloat(line.cost.amountPerQuantity.amount) === 0;
 
+  // A line we put in the cart, free or not. Used both to count actual gifts
+  // (combined with isFree below) and to keep every gift line out of the
+  // threshold basis - a gift must never help earn itself.
+  const isGiftLine = (line: (typeof input.cart.lines)[number]) =>
+    line.merchandise.__typename === "ProductVariant" &&
+    line.merchandise.id === configuration.gift_variant_id &&
+    line.giftMarker?.value === "true";
+
   const giftQuantity = input.cart.lines
-    .filter(
-      (line) =>
-        line.merchandise.__typename === "ProductVariant" &&
-        line.merchandise.id === configuration.gift_variant_id &&
-        line.giftMarker?.value === "true" &&
-        isFree(line),
-    )
+    .filter((line) => isGiftLine(line) && isFree(line))
     .reduce((total, line) => total + line.quantity, 0);
 
   console.log("[GWP validation] giftQuantity", giftQuantity);
@@ -153,9 +155,42 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
       });
     }
 
-    const subtotal = parseFloat(input.cart.cost.subtotalAmount.amount);
+    // Measure the threshold against what the customer's merchandise costs
+    // BEFORE any discount, not against what they end up paying.
+    //
+    // Functions run transform -> discounts -> validation, so by the time this
+    // runs `cart.cost.subtotalAmount` is already net of every discount code.
+    // Using it meant a customer who put $100 in the cart and applied a $30
+    // code was measured at $70, stopped qualifying, and had their checkout
+    // blocked - with the gift already in the cart and no way to fix it from
+    // the checkout page. The merchant's rule is "spend $100", and applying a
+    // discount does not un-spend it.
+    //
+    // `CartLineCost.subtotalAmount` is the line's cost before line-level
+    // discounts, so summing it across the customer's own lines gives that
+    // gross figure. Gift lines are excluded explicitly: their price is
+    // whatever the transform decided (usually $0) and they must never count
+    // toward the threshold that earns them.
+    const qualifyingSubtotal = input.cart.lines
+      .filter((line) => !isGiftLine(line))
+      .reduce((total, line) => total + parseFloat(line.cost.subtotalAmount.amount), 0);
 
-    if (subtotal < configuration.min_subtotal) {
+    // Logged so a live test with a real discount code can confirm which
+    // number moved and which did not - `cart.cost.subtotalAmount` should drop
+    // by the discount, `qualifyingSubtotal` should not.
+    console.log(
+      "[GWP validation] threshold basis",
+      JSON.stringify({
+        qualifyingSubtotal,
+        cartSubtotalAfterDiscounts: input.cart.cost.subtotalAmount.amount,
+        totalDiscounted: input.cart.lines
+          .flatMap((line) => line.discountAllocations)
+          .reduce((total, allocation) => total + parseFloat(allocation.discountedAmount.amount), 0),
+        minSubtotal: configuration.min_subtotal,
+      }),
+    );
+
+    if (qualifyingSubtotal < configuration.min_subtotal) {
       errors.push({
         message: `Your order must be at least $${configuration.min_subtotal.toFixed(2)} to qualify for the free gift.`,
         target: "$.cart",

@@ -21,14 +21,21 @@
             "quantity": 1,
             "cost": {
               "amountPerQuantity": {
-                "amount": "94.0"
+                "amount": "50.0"
+              },
+              "subtotalAmount": {
+                "amount": "50.0"
+              },
+              "totalAmount": {
+                "amount": "50.0"
               }
             },
             "merchandise": {
               "__typename": "ProductVariant",
               "id": "gid://shopify/ProductVariant/999"
             },
-            "giftMarker": null
+            "giftMarker": null,
+            "discountAllocations": []
           }
         ]
       },

@@ -1002,3 +1002,45 @@ store runs:
 A store whose theme lacks these still gets a working gift - the app is
 self-contained - but the cart UI will let customers edit the gift line's
 quantity and the gift product will be browsable.
+
+### 12. Discounts count toward the threshold (gross, not net)
+
+Functions run **transform -> discounts -> validation**, so the validation sees
+prices that are already net of every discount code. With `min_subtotal` at
+$100, a customer who put $100 of merchandise in the cart and applied a $30 code
+arrived at the validation measured at $70, stopped qualifying, and had checkout
+blocked - holding a gift they had legitimately earned, on a page where they
+cannot fix anything.
+
+**User's decision:** the rule is "spend $100", and applying a discount does not
+un-spend it. The threshold is now measured against the merchandise subtotal
+**before** discounts.
+
+Implementation, and both layers must stay identical or they will contradict
+each other at the worst moment:
+
+- Validation: `qualifyingSubtotal` = sum of `line.cost.subtotalAmount` over
+  lines that are not marked gift lines. `CartLineCost.subtotalAmount` is the
+  line cost before line-level discounts; `cart.cost.subtotalAmount` (used
+  before) is net of them.
+- Storefront JS: sum of `item.original_line_price` over non-gift lines.
+  `items_subtotal_price` (used before) is already net.
+
+Gift lines are excluded from the basis outright, marked-and-free or not: a gift
+must never help earn itself.
+
+Both layers log the gross and the net figure side by side, so a live test with
+a real discount code shows immediately which one moved.
+
+**Known consequence, not yet decided:** there is no floor. A 100%-off code
+leaves the customer paying nothing and still qualifying, because the gross
+merchandise total is unchanged. If that matters, the fix is a second condition
+on what is actually paid (`cart.cost.subtotalAmount >= some floor`) - ask
+before adding it, it is a merchandising call.
+
+**Not verified live yet.** The semantics of `CartLineCost.subtotalAmount` in
+the Functions API are taken from the schema description ("cost before
+line-level discounts"), not from an observed run with a real discount code.
+Test with an actual code before trusting this: the log line
+`[GWP validation] threshold basis` prints `qualifyingSubtotal` next to
+`cartSubtotalAfterDiscounts`, and only the second should drop.

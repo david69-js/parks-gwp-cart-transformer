@@ -361,15 +361,24 @@
           return;
         }
 
-        // The gift itself is $0, so it never affects the subtotal - but
-        // exclude it explicitly anyway in case a manual price override or
-        // discount ever changes that assumption.
-        var giftLinesTotal = giftLines.reduce(function (total, item) { return total + item.line_price; }, 0);
-        var subtotalExcludingGift = (cart.items_subtotal_price != null ? cart.items_subtotal_price : cart.total_price) - giftLinesTotal;
-        var qualifies = subtotalExcludingGift / 100 >= minSubtotal;
+        // Measured BEFORE discounts, and this has to stay identical to the
+        // validation function's `qualifyingSubtotal` - if the two disagree,
+        // this script hands the customer a gift that checkout then refuses,
+        // or withholds one that checkout would have allowed.
+        //
+        // `original_line_price` is the line's price before any discount;
+        // `items_subtotal_price` (used before) is already net of them, which
+        // is what made a $100 cart with a $30 code stop qualifying at $70.
+        // Gift lines are skipped outright: a gift never helps earn itself.
+        var qualifyingSubtotal = cart.items.reduce(function (total, item) {
+          if (isMarkedGiftLine(item)) return total;
+          return total + (item.original_line_price != null ? item.original_line_price : item.line_price);
+        }, 0);
+        var qualifies = qualifyingSubtotal / 100 >= minSubtotal;
 
         console.log('[GWP] sync', {
-          subtotalExcludingGift: subtotalExcludingGift / 100,
+          qualifyingSubtotal: qualifyingSubtotal / 100,
+          cartSubtotalAfterDiscounts: (cart.items_subtotal_price != null ? cart.items_subtotal_price : cart.total_price) / 100,
           minSubtotal: minSubtotal,
           qualifies: qualifies,
           giftLineCount: giftLines.length,

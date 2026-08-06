@@ -12,7 +12,7 @@
         },
         "cost": {
           "subtotalAmount": {
-            "amount": "150.00",
+            "amount": "70.00",
             "currencyCode": "USD"
           }
         },
@@ -43,13 +43,13 @@
             "quantity": 1,
             "cost": {
               "amountPerQuantity": {
-                "amount": "150.0"
+                "amount": "100.0"
               },
               "subtotalAmount": {
-                "amount": "150.0"
+                "amount": "100.0"
               },
               "totalAmount": {
-                "amount": "150.0"
+                "amount": "70.0"
               }
             },
             "merchandise": {
@@ -57,7 +57,16 @@
               "id": "gid://shopify/ProductVariant/111"
             },
             "giftMarker": null,
-            "discountAllocations": []
+            "discountAllocations": [
+              {
+                "discountedAmount": {
+                  "amount": "30.0"
+                },
+                "discountApplication": {
+                  "targetType": "LINE_ITEM"
+                }
+              }
+            ]
           }
         ]
       },

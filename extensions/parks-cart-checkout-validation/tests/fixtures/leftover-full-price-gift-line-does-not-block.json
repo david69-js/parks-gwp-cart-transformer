@@ -20,6 +20,12 @@
             "cost": {
               "amountPerQuantity": {
                 "amount": "94.0"
+              },
+              "subtotalAmount": {
+                "amount": "94.0"
+              },
+              "totalAmount": {
+                "amount": "94.0"
               }
             },
             "merchandise": {
@@ -28,7 +34,28 @@
             },
             "giftMarker": {
               "value": "true"
-            }
+            },
+            "discountAllocations": []
+          },
+          {
+            "quantity": 1,
+            "cost": {
+              "amountPerQuantity": {
+                "amount": "150.0"
+              },
+              "subtotalAmount": {
+                "amount": "150.0"
+              },
+              "totalAmount": {
+                "amount": "150.0"
+              }
+            },
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/111"
+            },
+            "giftMarker": null,
+            "discountAllocations": []
           }
         ]
       },

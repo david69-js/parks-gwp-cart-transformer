@@ -23,6 +23,20 @@ query CartValidationsGenerateRunInput {
         amountPerQuantity {
           amount
         }
+        subtotalAmount {
+          amount
+        }
+        totalAmount {
+          amount
+        }
+      }
+      discountAllocations {
+        discountedAmount {
+          amount
+        }
+        discountApplication {
+          targetType
+        }
       }
       merchandise {
         __typename
