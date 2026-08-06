@@ -920,3 +920,85 @@ Corrections to earlier claims in this document and in
   deactivating the product breaks the app's own add is therefore too strong for
   the Draft case. Removing the product from the **Online Store sales channel**
   is a different setting and was not tested - the warning may still hold there.
+
+## Installing this app on another store
+
+Two things can block this before you start, so check them first.
+
+**1. The target store must be Shopify Plus.** The transform uses `lineUpdate`
+with a price adjustment, and `linesMerge` with a price. Both are Plus-only. On
+a non-Plus store this is not a silent no-op - it is a hard cart calculation
+error that blocks the entire cart (see the header comment in
+`cart_transform_run.ts`). If the target is not Plus, the transform has to be
+reworked to the pre-Plus design first: gift variant priced $0 in the catalog,
+no price clamp.
+
+**2. Check the app's Distribution setting** in the Dev/Partner dashboard, under
+the app -> Distribution. This decides whether you can reuse this app at all:
+
+- **Not selected yet** - you can still choose. Custom distribution is the right
+  pick for a single merchant.
+- **Custom distribution, already locked to a store** - it is locked to that one
+  store permanently and cannot be repointed. Installing on a different merchant
+  store means creating a NEW app and linking this codebase to it:
+  `shopify app config link` (pick "Create a new app"), then `shopify app deploy`.
+  The code is unchanged; only `client_id` in `shopify.app.toml` differs.
+- **Public distribution** - App Store listing plus review. Not what this app is
+  set up for.
+
+A development store in the same organisation needs none of this: use
+`shopify app dev --store <store>.myshopify.com`, or install the released
+version from the dashboard's install link.
+
+### Per-store steps, in order
+
+Steps 2-4 are manual and have to be repeated on every fresh install - including
+a reinstall on a store that had the app before.
+
+1. **`shopify app deploy`** - releases a version. One release serves every store
+   the app is installed on; it is not per-store.
+
+2. **Install the app on the store** via the install link, then confirm the
+   scopes prompt. Scopes are in `shopify.app.toml`
+   (`read_products, write_products, read_customers, write_cart_transforms,
+   write_validations`). Changing them later forces a reinstall.
+
+3. **Activate the Cart & Checkout Validation function by hand.** This CANNOT be
+   automated from an extension-only app - `validationCreate` needs offline
+   access, and admin UI extensions call the Admin API in online mode. See
+   decision 6 for the full diagnosis and the exact mutation. Run it once per
+   store from `shopify app dev`'s GraphiQL at `http://localhost:3457/graphiql`.
+   Skipping this is silent: the transform still makes the gift free, but nothing
+   enforces the rules at checkout. Verify in Admin -> Settings -> Apps -> the app
+   that it reads "Functions: 2 active", not 1.
+
+4. **Open the admin action on the gift product** (product page -> More actions ->
+   "Gift With Purchase settings"), set status / gift variant / minimum subtotal,
+   and Save. That one save does three things: writes the
+   `$app:gwp.config` shop metafield, registers its definition with
+   `storefront: PUBLIC_READ` so Liquid can read it, and calls
+   `cartTransformCreate` idempotently. Nothing works before this save.
+
+5. **Turn on the theme app embed.** Online Store -> Themes -> Customize -> App
+   embeds -> "Gift With Purchase". It defaults to OFF and does not enable itself
+   on install (decision 7). Without it `#gwp-config` never renders and the
+   storefront script never loads.
+
+### What does NOT travel with the app
+
+The app ships the four extensions and nothing else. Everything below lives in
+`Parks-Project-Theme` and has to be ported by hand to whatever theme the target
+store runs:
+
+- the drawer-cart progress bar and its `free_gift_threshold` / `free_gift_enabled`
+  settings (and keeping that threshold in sync with the app's `min_subtotal`);
+- the disabled quantity control on the gift line in cart and drawer cart;
+- hiding the gift product from collections, search, related products and its own
+  PDP, plus the PDP redirect (only needed where the gift product is $0 in the
+  catalog);
+- the theme's own `_gwp_gift` property handling so the marker is not printed as
+  a visible line property.
+
+A store whose theme lacks these still gets a working gift - the app is
+self-contained - but the cart UI will let customers edit the gift line's
+quantity and the gift product will be browsable.
