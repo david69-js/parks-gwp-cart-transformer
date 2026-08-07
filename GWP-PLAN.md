@@ -1038,9 +1038,16 @@ merchandise total is unchanged. If that matters, the fix is a second condition
 on what is actually paid (`cart.cost.subtotalAmount >= some floor`) - ask
 before adding it, it is a merchandising call.
 
-**Not verified live yet.** The semantics of `CartLineCost.subtotalAmount` in
-the Functions API are taken from the schema description ("cost before
-line-level discounts"), not from an observed run with a real discount code.
-Test with an actual code before trusting this: the log line
-`[GWP validation] threshold basis` prints `qualifyingSubtotal` next to
-`cartSubtotalAfterDiscounts`, and only the second should drop.
+**Verified live on v19**, `testing-david-plus`, two separate real discount
+codes, both against merchandise gross $101.00 (min_subtotal $100):
+
+- `code1` (23% off): net $77.77. Checkout showed the gift as FREE, no
+  banner, order proceeded to payment.
+- `GWPTEST30` (fixed amount, presentment currency GTQ -> ~$4.01 USD after
+  conversion): net $96.99. Same result - gift FREE, checkout clean.
+
+Both cases have gross >= $100 and net < $100; with the old net-based logic
+either would have blocked checkout while the gift sat in the cart. Confirms
+`CartLineCost.subtotalAmount` behaves as documented (cost before line-level
+discounts) in a live discounted checkout, not just against the schema
+description.
