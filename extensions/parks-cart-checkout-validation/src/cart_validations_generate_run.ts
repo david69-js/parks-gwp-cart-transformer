@@ -71,19 +71,6 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
     return { operations: [] };
   }
 
-  // This offer only applies to US orders in USD - everywhere else, don't
-  // enforce anything.
-  const isUsInUsd =
-    input.localization.country.isoCode === "US" && input.cart.cost.subtotalAmount.currencyCode === "USD";
-
-  if (!isUsInUsd) {
-    console.log("[GWP validation] not US/USD, allowing checkout", {
-      country: input.localization.country.isoCode,
-      currency: input.cart.cost.subtotalAmount.currencyCode,
-    });
-    return { operations: [] };
-  }
-
   // Count lines matching the gift variant AND carrying the "_gwp_gift"
   // marker, and sum their quantity. This store is on Shopify Plus (see
   // GWP-PLAN.md, "Plus pivot") - the cart-transform function
@@ -151,6 +138,32 @@ export function cartValidationsGenerateRun(input: CartValidationsGenerateRunInpu
     if (!input.cart.buyerIdentity?.isAuthenticated) {
       errors.push({
         message: "Please log in to your account to receive the free gift.",
+        target: "$.cart",
+      });
+    }
+
+    // The offer is US-only, in USD. This used to be a blanket early return
+    // ("not US/USD -> allow checkout, don't enforce anything") before
+    // giftQuantity was even computed. That was backwards: the Cart Transform
+    // has its own country check now (see cart_transform_run.ts) and refuses
+    // to clamp a line to $0 outside the US, but until that shipped, this
+    // function's job was specifically to catch a $0 gift line that
+    // shouldn't exist - and bailing out before checking for one did the
+    // opposite of catching it. Confirmed live: a customer switched the
+    // delivery country on the checkout page itself (this function reruns on
+    // every checkout recalculation), the transform kept the line free with
+    // no country awareness of its own, and this function's early return let
+    // the order through with zero errors.
+    //
+    // Kept here as defense in depth even with the transform fixed: this is
+    // the layer that can't be bypassed by a bug or a future change in the
+    // transform, exactly like the login check above it.
+    const isUsInUsd =
+      input.localization.country.isoCode === "US" && input.cart.cost.subtotalAmount.currencyCode === "USD";
+
+    if (!isUsInUsd) {
+      errors.push({
+        message: "This gift is only available for orders shipping to the US in USD.",
         target: "$.cart",
       });
     }

@@ -12,13 +12,13 @@
         },
         "cost": {
           "subtotalAmount": {
-            "amount": "40.00",
+            "amount": "150.00",
             "currencyCode": "CAD"
           }
         },
         "lines": [
           {
-            "quantity": 2,
+            "quantity": 1,
             "cost": {
               "amountPerQuantity": {
                 "amount": "0.0"
@@ -43,13 +43,13 @@
             "quantity": 1,
             "cost": {
               "amountPerQuantity": {
-                "amount": "40.0"
+                "amount": "150.0"
               },
               "subtotalAmount": {
-                "amount": "40.0"
+                "amount": "150.0"
               },
               "totalAmount": {
-                "amount": "40.0"
+                "amount": "150.0"
               }
             },
             "merchandise": {
@@ -71,12 +71,23 @@
       },
       "localization": {
         "country": {
-          "isoCode": "CA"
+          "isoCode": "US"
         }
       }
     },
     "output": {
-      "operations": []
+      "operations": [
+        {
+          "validationAdd": {
+            "errors": [
+              {
+                "message": "This gift is only available for orders shipping to the US in USD.",
+                "target": "$.cart"
+              }
+            ]
+          }
+        }
+      ]
     }
   }
 }

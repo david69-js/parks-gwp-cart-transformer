@@ -3,6 +3,11 @@
     "export": "cart-transform-run",
     "target": "cart.transform.run",
     "input": {
+      "localization": {
+        "country": {
+          "isoCode": "US"
+        }
+      },
       "cart": {
         "buyerIdentity": {
           "isAuthenticated": true

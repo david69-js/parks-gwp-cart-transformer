@@ -565,12 +565,21 @@ Which layer enforces what (verified by reading each source, not assumed):
 |---|---|---|---|
 | `status: "draft"` | yes | yes | yes |
 | Customer logged in | yes | yes | yes |
-| US / USD only | yes | **NO** | yes |
+| US only | yes | yes (country only - see note) | yes (country + currency) |
 | Minimum subtotal | yes | **NO** | yes |
 | `test_mode` + tag | yes | **NO** | **NO** |
 | Only one gift | no | merges duplicates | yes |
 
-Two of those gaps matter operationally and are described below.
+The transform checks country, not currency: its `Cart` type has no `cost`
+field, so unlike the validation function it cannot read
+`cart.cost.subtotalAmount.currencyCode`. Country is the dimension a customer
+can actually change without reloading the storefront page (the delivery
+country selector on the checkout page itself), which is what made this a live
+bug rather than a theoretical gap - see failure mode 5 below. A US-country,
+non-USD-presentment-currency cart is a narrower edge case still caught
+independently by the validation, which checks both.
+
+The remaining gap matters operationally and is described below.
 
 ### Use case 1: `status` active vs draft
 
@@ -641,13 +650,31 @@ error anywhere. Check that `settings_data.json` contains a
 `shopify://apps/parks-gwp-cart-transformer/blocks/gwp-add-to-cart/...` entry
 with `"disabled": false` before deploying a theme.
 
-**5. Gift stays free outside the US.** The transform never checks country -
-only the JS and the validation do. A marked line on a non-US cart is still
-clamped to $0 by the transform, and the validation deliberately allows
-non-US checkouts through, so nothing stops it. Reaching that state requires
-the JS to have failed to clean up after a market switch, but it is a real
-hole. `localization` IS available in the transform's input (it simply isn't
-queried), so this is fixable, not a platform limit.
+**5. Gift stays free outside the US - CLOSED.** The transform did not check
+country at all, and the validation's response to a non-US/non-USD cart was to
+return zero operations *before ever checking whether a free gift line
+existed* - not "allow this specific thing", but "stop enforcing anything on
+this cart". Together that meant a marked line already clamped to $0 sailed
+through a non-US checkout with no error whatsoever.
+
+**Confirmed live, and by a route that didn't need the JS to fail at all**: a
+customer added the gift while eligible, then changed the delivery country on
+the **checkout page itself**. Checkout is server-hosted, not the storefront
+theme - the app embed script never runs there. The Cart Transform and
+Validation functions both rerun on every checkout recalculation regardless,
+and neither had ever been taught to notice the country had changed.
+
+**Fixed in both functions, mirroring the existing status/login gates:**
+
+- The transform now queries `localization.country.isoCode` and returns
+  `NO_CHANGES` (refuses to clamp) when it isn't `"US"` - the same pattern as
+  the draft-status and not-authenticated checks already there.
+- The validation no longer bails out early for a non-US/USD cart. The country
+  + currency check moved *inside* the `giftQuantity > 0` block, alongside the
+  login check, so a free gift line found in a non-US/non-USD cart now blocks
+  checkout with "This gift is only available for orders shipping to the US in
+  USD." - kept as defense in depth even with the transform fixed, exactly like
+  every other rule here has two independent layers.
 
 ### Known structural weakness - CLOSED
 
@@ -677,8 +704,9 @@ requests that touched a non-gift line) and the "actually free" gate itself.
 
 The second candidate fix - having the transform decide "qualifies" from
 `cost.amountPerQuantity` + `localization` and simply not clamp - was NOT
-implemented. It is still worth doing for a different reason: the transform
-currently never checks country (see the enforcement matrix above).
+implemented as originally scoped (a full subtotal-aware qualification). Its
+narrower piece, a country check, was implemented separately - see failure
+mode 5, "CLOSED".
 
 Still unverified: the transform issues `lineUpdate` against the gift variant
 even after the merchant deactivates that product. This file's own header warns

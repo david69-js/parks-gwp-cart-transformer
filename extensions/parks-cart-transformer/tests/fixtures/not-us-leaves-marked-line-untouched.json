@@ -5,12 +5,12 @@
     "input": {
       "localization": {
         "country": {
-          "isoCode": "US"
+          "isoCode": "CA"
         }
       },
       "cart": {
         "buyerIdentity": {
-          "isAuthenticated": false
+          "isAuthenticated": true
         },
         "lines": [
           {
@@ -29,7 +29,6 @@
       "shop": {
         "metafield": {
           "jsonValue": {
-            "status": "active",
             "min_subtotal": 100.0,
             "gift_variant_id": "gid://shopify/ProductVariant/999"
           }

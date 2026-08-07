@@ -69,6 +69,30 @@ export function cartTransformRun(input: CartTransformRunInput): CartTransformRun
     return NO_CHANGES;
   }
 
+  // The offer is US-only (see GWP-PLAN.md). This function used to have no
+  // country check at all - it clamped a marked line to $0 regardless of
+  // where the order was shipping. That was silent until a customer switched
+  // the delivery country on the CHECKOUT page itself: this function reruns
+  // on every checkout recalculation, still had no country awareness, and
+  // kept the line free. The validation function's own "only enforce in
+  // US/USD" rule then made things worse, not better - it bailed out of ALL
+  // enforcement for the cart instead of blocking, so a $0 gift line sailed
+  // through checkout for a non-US order with no error at all. Confirmed
+  // live.
+  //
+  // Only country, not currency: this function's Cart type has no `cost`
+  // field, so unlike the validation function it cannot read
+  // `cart.cost.subtotalAmount.currencyCode`. Country is the dimension that
+  // was actually reported broken (switching the delivery country at
+  // checkout), and it is also the one a customer can change without
+  // reloading the storefront page - a currency mismatch while still
+  // shipping to the US is a narrower edge case, and the validation function
+  // still catches it independently (it checks both).
+  if (input.localization.country.isoCode !== "US") {
+    console.log("[GWP transform] not US, doing nothing", {country: input.localization.country.isoCode});
+    return NO_CHANGES;
+  }
+
   // Match on merchandise id AND the "_gwp_gift" marker property. Unlike the
   // old (pre-Plus) design, the gift variant's catalog price is no longer
   // assumed to be $0 - only the auto-added, marked line should be free. A

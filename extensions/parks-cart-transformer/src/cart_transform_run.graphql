@@ -1,4 +1,9 @@
 query CartTransformRunInput {
+  localization {
+    country {
+      isoCode
+    }
+  }
   cart {
     buyerIdentity {
       isAuthenticated
