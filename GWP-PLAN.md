@@ -676,6 +676,16 @@ and neither had ever been taught to notice the country had changed.
   USD." - kept as defense in depth even with the transform fixed, exactly like
   every other rule here has two independent layers.
 
+**Verified live on v21**, `testing-david-plus`, reproducing the exact reported
+flow: added the gift with a US shipping address (line showed FREE), then, on
+the SAME checkout page without reloading, switched to a saved Guatemala
+address. The gift line immediately reverted to its catalog price (Q24.95) -
+no error banner, "Pay now" stayed enabled. That is the correct outcome, not a
+missed block: once the transform refuses to clamp, the line is an ordinary
+paid item, not a free one, so there is nothing left to enforce against. The
+customer can still complete checkout - just paying for what they're getting,
+which is the entire point.
+
 ### Known structural weakness - CLOSED
 
 Errors 3 and 5 shared a root cause: **the server could create states that only
